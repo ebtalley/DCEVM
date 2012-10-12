@@ -107,10 +107,12 @@ jvmtiError VM_RedefineClasses::find_sorted_affected_classes(GrowableArray<instan
   FindAffectedKlassesClosure closure(&klasses_to_redefine, &affected_classes);
 
   // Trace affected classes
-  TRACE_RC1("Klasses affected: %d", affected_classes.length());
-  IF_TRACE_RC2 {
+  if (RC_TRACE_ENABLED(0x00000001)) {
+    RC_TRACE(0x00000001, ("Klasses affected: %d",
+      affected_classes.length()));
     for (int i=0; i<affected_classes.length(); i++) {
-      TRACE_RC2(affected_classes.at(i)->name()->as_C_string());
+      RC_TRACE(0x00000001, ("%s",
+        affected_classes.at(i)->name()->as_C_string()));
     }
   }
 
@@ -120,10 +122,11 @@ jvmtiError VM_RedefineClasses::find_sorted_affected_classes(GrowableArray<instan
 
   // Sort the affected klasses such that a supertype is always on a smaller array index than its subtype.
   jvmtiError result = do_topological_class_sorting(_class_defs, _class_count, &affected_classes, all_affected_klasses, Thread::current());
-  IF_TRACE_RC2 {
-    TRACE_RC2("Redefine order: ");  
+  if (RC_TRACE_ENABLED(0x00000001)) {
+    RC_TRACE(0x00000001, ("Redefine order: "));
     for (int i=0; i<all_affected_klasses->length(); i++) {
-      TRACE_RC2("%s", all_affected_klasses->at(i)->name()->as_C_string());
+      RC_TRACE(0x00000001, ("%s",
+        all_affected_klasses->at(i)->name()->as_C_string()));
     }
   }
 
@@ -186,7 +189,7 @@ jvmtiError VM_RedefineClasses::find_class_bytes(instanceKlassHandle the_class, c
 bool VM_RedefineClasses::doit_prologue() {
 
   _revision_number++;
-  TRACE_RC1("Redefinition with revision number %d started!", _revision_number);
+  RC_TRACE(0x00000001, ("Redefinition with revision number %d started!", _revision_number));
 
   assert(Thread::current()->is_Java_thread(), "must be Java thread");
   RC_TIMER_START(_timer_prologue);
@@ -201,19 +204,19 @@ bool VM_RedefineClasses::doit_prologue() {
   _new_classes = new (ResourceObj::C_HEAP) GrowableArray<instanceKlassHandle>(5, true);
   _result = load_new_class_versions(Thread::current());
 
-  TRACE_RC1("Loaded new class versions!");
+  RC_TRACE(0x00000001, ("Loaded new class versions!"));
   if (_result != JVMTI_ERROR_NONE) {
-    TRACE_RC1("error occured: %d!", _result);
+    RC_TRACE(0x00000001, ("error occured: %d!", _result));
     delete _new_classes;
     _new_classes = NULL;
     RC_TIMER_STOP(_timer_prologue);
     return false;
   }
 
-  TRACE_RC2("nearly finished");
+  RC_TRACE(0x00000001, ("nearly finished"));
   VM_GC_Operation::doit_prologue();
   RC_TIMER_STOP(_timer_prologue);
-  TRACE_RC2("doit_prologue finished!");
+  RC_TRACE(0x00000001, ("doit_prologue finished!"));
   return true;
 }
 
@@ -236,7 +239,8 @@ jvmtiError VM_RedefineClasses::check_exception() const {
   if (HAS_PENDING_EXCEPTION) {
 
     Symbol* ex_name = PENDING_EXCEPTION->klass()->klass_part()->name();
-    TRACE_RC1("parse_stream exception: '%s'", ex_name->as_C_string());      
+    RC_TRACE(0x00000001, ("parse_stream exception: '%s'",
+      ex_name->as_C_string()));
     if (TraceRedefineClasses >= 1) {
       java_lang_Throwable::print(PENDING_EXCEPTION, tty);
       tty->print_cr("");
@@ -268,14 +272,16 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
 
   ResourceMark rm(THREAD);
 
-  TRACE_RC1("===================================================================");
-  TRACE_RC1("load new class versions (%d)", _class_count);
+  RC_TRACE(0x00000001, ("==================================================================="));
+  RC_TRACE(0x00000001, ("load new class versions (%d)",
+    _class_count));
 
   // Retrieve an array of all classes that need to be redefined
   GrowableArray<instanceKlassHandle> all_affected_klasses;
   jvmtiError err = find_sorted_affected_classes(&all_affected_klasses);
   if (err != JVMTI_ERROR_NONE) {
-    TRACE_RC1("Error finding sorted affected classes: %d", (int)err);
+    RC_TRACE(0x00000001, ("Error finding sorted affected classes: %d",
+      (int)err));
     return err;
   }
 
@@ -286,10 +292,12 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
   jvmtiError result = JVMTI_ERROR_NONE;
 
   for (int i=0; i<all_affected_klasses.length(); i++) {
-    TRACE_RC2("Processing affected class %d of %d", i+1, all_affected_klasses.length());
+    RC_TRACE(0x00000002, ("Processing affected class %d of %d",
+      i+1, all_affected_klasses.length()));
 
     instanceKlassHandle the_class = all_affected_klasses.at(i);
-    TRACE_RC2("name=%s", the_class->name()->as_C_string());
+    RC_TRACE(0x00000002, ("name=%s",
+      the_class->name()->as_C_string()));
 
     the_class->link_class(THREAD);
     result = check_exception();
@@ -301,7 +309,8 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
     jvmtiError error;
     jboolean not_changed;
     if ((error = find_class_bytes(the_class, &class_bytes, &class_byte_count, &not_changed)) != JVMTI_ERROR_NONE) {
-      TRACE_RC1("Error finding class bytes: %d", (int)error);
+      RC_TRACE(0x00000001, ("Error finding class bytes: %d",
+        (int)error));
       result = error;
       break;
     }
@@ -313,7 +322,7 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
     // load hook event.
     state->set_class_being_redefined(&the_class, _class_load_kind);
 
-    TRACE_RC2("Before resolving from stream");
+    RC_TRACE(0x00000002, ("Before resolving from stream"));
 
     RC_TIMER_STOP(_timer_prologue);
     RC_TIMER_START(_timer_class_loading);
@@ -337,7 +346,7 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
     RC_TIMER_STOP(_timer_class_loading);
     RC_TIMER_START(_timer_prologue);
 
-    TRACE_RC2("After resolving class from stream!");
+    RC_TRACE(0x00000002, ("After resolving class from stream!"));
     // Clear class_being_redefined just to be sure.
     state->clear_class_being_redefined();
 
@@ -358,7 +367,10 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
 
     if (!THREAD->is_Compiler_thread()) {
 
-      TRACE_RC2("name=%s loader=%d protection_domain=%d", the_class->name()->as_C_string(), (int)(the_class->class_loader()), (int)(the_class->protection_domain()));
+      RC_TRACE(0x00000002, ("name=%s loader=%d protection_domain=%d",
+        the_class->name()->as_C_string(),
+        (int)(the_class->class_loader()),
+        (int)(the_class->protection_domain())));
       // If we are on the compiler thread, we must not try to resolve a class.
       klassOop systemLookup = SystemDictionary::resolve_or_null(the_class->name(), the_class->class_loader(), the_class->protection_domain(), THREAD);
       
@@ -379,9 +391,12 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
 
 #endif
 
-    IF_TRACE_RC1 {
+    if (RC_TRACE_ENABLED(0x00000001)) {
       if (new_class->layout_helper() != the_class->layout_helper()) {
-        TRACE_RC1("Instance size change for class %s: new=%d old=%d", new_class->name()->as_C_string(), new_class->layout_helper(), the_class->layout_helper());
+        RC_TRACE(0x00000001, ("Instance size change for class %s: new=%d old=%d",
+         new_class->name()->as_C_string(),
+         new_class->layout_helper(),
+         the_class->layout_helper()));
       }
     }
 
@@ -402,7 +417,7 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
     } else {
       jvmtiError allowed = check_redefinition_allowed(new_class);
       if (allowed != JVMTI_ERROR_NONE) {
-        TRACE_RC1("Error redefinition not allowed!");
+        RC_TRACE(0x00000001, ("Error redefinition not allowed!"));
         result = allowed;
         break;
       }
@@ -437,9 +452,10 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
       }
     }
 
-    IF_TRACE_RC3 {
+    if (RC_TRACE_ENABLED(0x00000008)) {
       if (new_class->super() != NULL) {
-        TRACE_RC3("Super class is %s", new_class->super()->klass_part()->name()->as_C_string());
+        RC_TRACE(0x00000008, ("Super class is %s",
+          new_class->super()->klass_part()->name()->as_C_string()));
       }
     }
 
@@ -450,7 +466,7 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
     new_class->vtable()->verify(tty);
 #endif
 
-    TRACE_RC2("Verification done!");
+    RC_TRACE(0x00000002, ("Verification done!"));
 
     if (i == all_affected_klasses.length() - 1) {
 
@@ -478,7 +494,8 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
                 }
               }
               all_affected_klasses.insert_before(k, handle);
-              TRACE_RC2("Adding newly loaded class to affected classes: %s", cur_klass->name()->as_C_string());
+              RC_TRACE(0x00000002, ("Adding newly loaded class to affected classes: %s",
+                cur_klass->name()->as_C_string()));
             }
           }
 
@@ -490,7 +507,8 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
       if (new_count != 0) {
 
         unlock_threads();
-        TRACE_RC1("Found new number of affected classes: %d", new_count);
+        RC_TRACE(0x00000001, ("Found new number of affected classes: %d",
+          new_count));
       }
     }
   }
@@ -507,7 +525,10 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
     instanceKlassHandle the_class = all_affected_klasses.at(i);
     instanceKlassHandle new_class(the_class->new_version());
 
-    TRACE_RC2("Linking class %d/%d %s", i, all_affected_klasses.length(), the_class->name()->as_C_string());
+    RC_TRACE(0x00000002, ("Linking class %d/%d %s",
+      i,
+      all_affected_klasses.length(),
+      the_class->name()->as_C_string()));
     new_class->link_class(THREAD);
 
     result = check_exception();
@@ -521,7 +542,7 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
     return result;
   }
 
-  TRACE_RC2("All classes loaded!");
+  RC_TRACE(0x00000002, ("All classes loaded!"));
 
 #ifdef ASSERT
   for (int i=0; i<all_affected_klasses.length(); i++) {
@@ -541,7 +562,7 @@ jvmtiError VM_RedefineClasses::load_new_class_versions(TRAPS) {
 
 #endif
 
-  TRACE_RC1("Finished verification!");
+  RC_TRACE(0x00000001, ("Finished verification!"));
   return JVMTI_ERROR_NONE;
 }
 
@@ -570,7 +591,7 @@ void VM_RedefineClasses::lock_threads() {
     javaThread = javaThread->next();
   }
 
-  TRACE_RC2("Locked %d compiler threads", cnt);
+  RC_TRACE(0x00000002, ("Locked %d compiler threads", cnt));
 
   cnt = 0;
   javaThread = Threads::first();
@@ -582,7 +603,7 @@ void VM_RedefineClasses::lock_threads() {
   }
 
 
-  TRACE_RC2("Locked %d threads", cnt);
+  RC_TRACE(0x00000002, ("Locked %d threads", cnt));
 
   RC_TIMER_STOP(_timer_wait_for_locks);
 }
@@ -603,7 +624,7 @@ void VM_RedefineClasses::unlock_threads() {
     javaThread = javaThread->next();
   }
 
-  TRACE_RC2("Unlocked %d compiler threads", cnt);
+  RC_TRACE(0x00000002, ("Unlocked %d compiler threads", cnt));
 
   cnt = 0;
   javaThread = Threads::first();
@@ -616,7 +637,7 @@ void VM_RedefineClasses::unlock_threads() {
     javaThread = javaThread->next();
   }
 
-  TRACE_RC2("Unlocked %d threads", cnt);
+  RC_TRACE(0x00000002, ("Unlocked %d threads", cnt));
 }
 
 jvmtiError VM_RedefineClasses::check_redefinition_allowed(instanceKlassHandle scratch_class) {
@@ -867,7 +888,8 @@ int VM_RedefineClasses::calculate_redefinition_flags(instanceKlassHandle new_cla
 
 
 
-  TRACE_RC2("Comparing different class versions of class %s", new_class->name()->as_C_string());
+  RC_TRACE(0x00000002, ("Comparing different class versions of class %s",
+    new_class->name()->as_C_string()));
 
   assert(new_class->old_version() != NULL, "must have old version");
   instanceKlassHandle the_class(new_class->old_version());
@@ -889,11 +911,13 @@ int VM_RedefineClasses::calculate_redefinition_flags(instanceKlassHandle new_cla
     klassOop cur_klass = the_class->super();
     while (cur_klass != NULL) {
       if (!new_class->is_subclass_of(cur_klass->klass_part()->newest_version())) {
-        TRACE_RC2("Removed super class %s", cur_klass->klass_part()->name()->as_C_string());
+        RC_TRACE(0x00000002, ("Removed super class %s",
+          cur_klass->klass_part()->name()->as_C_string()));
         result = result | Klass::RemoveSuperType | Klass::ModifyInstances | Klass::ModifyClass;
 
         if (!cur_klass->klass_part()->has_subtype_changed()) {
-          TRACE_RC2("Subtype changed of class %s", cur_klass->klass_part()->name()->as_C_string());
+          RC_TRACE(0x00000002, ("Subtype changed of class %s",
+            cur_klass->klass_part()->name()->as_C_string()));
           cur_klass->klass_part()->set_subtype_changed(true);
         }
       }
@@ -904,7 +928,8 @@ int VM_RedefineClasses::calculate_redefinition_flags(instanceKlassHandle new_cla
     cur_klass = new_class->super();
     while (cur_klass != NULL) {
       if (!the_class->is_subclass_of(cur_klass->klass_part()->old_version())) {
-        TRACE_RC2("Added super class %s", cur_klass->klass_part()->name()->as_C_string());
+        RC_TRACE(0x00000002, ("Added super class %s",
+          cur_klass->klass_part()->name()->as_C_string()));
         result = result | Klass::ModifyClass | Klass::ModifyInstances;
       }
       cur_klass = cur_klass->klass_part()->super();
@@ -920,10 +945,12 @@ int VM_RedefineClasses::calculate_redefinition_flags(instanceKlassHandle new_cla
     instanceKlassHandle old_interface((klassOop)old_interfaces->obj_at(i));
     if (!new_class->implements_interface_any_version(old_interface())) {
       result = result | Klass::RemoveSuperType | Klass::ModifyClass;
-      TRACE_RC2("Removed interface %s", old_interface->name()->as_C_string());
+      RC_TRACE(0x00000002, ("Removed interface %s",
+        old_interface->name()->as_C_string()));
       
       if (!old_interface->has_subtype_changed()) {
-        TRACE_RC2("Subtype changed of interface %s", old_interface->name()->as_C_string());
+        RC_TRACE(0x00000002, ("Subtype changed of interface %s",
+          old_interface->name()->as_C_string()));
         old_interface->set_subtype_changed(true);
       }
     }
@@ -934,7 +961,8 @@ int VM_RedefineClasses::calculate_redefinition_flags(instanceKlassHandle new_cla
   for (i = 0; i<new_interfaces->length(); i++) {
     if (!the_class->implements_interface_any_version((klassOop)new_interfaces->obj_at(i))) {
       result = result | Klass::ModifyClass;
-      TRACE_RC2("Added interface %s", ((klassOop)new_interfaces->obj_at(i))->klass_part()->name()->as_C_string());
+      RC_TRACE(0x00000002, ("Added interface %s",
+        ((klassOop)new_interfaces->obj_at(i))->klass_part()->name()->as_C_string()));
     }
   }
 
@@ -1081,13 +1109,15 @@ int VM_RedefineClasses::calculate_redefinition_flags(instanceKlassHandle new_cla
           idnum_owner->set_method_idnum(new_num);
         }
         k_new_method->set_method_idnum(old_num);
-        TRACE_RC2("swapping idnum of new and old method %d / %d!", new_num, old_num);        
+        RC_TRACE(0x00000002, ("swapping idnum of new and old method %d / %d!",
+          new_num,
+          old_num));
        // swap_all_method_annotations(old_num, new_num, new_class);
       }
     }
-    TRACE_RC3("Method matched: new: %s [%d] == old: %s [%d]",
+    RC_TRACE(0x00008000, ("Method matched: new: %s [%d] == old: %s [%d]",
       k_new_method->name_and_sig_as_C_string(), ni,
-      k_old_method->name_and_sig_as_C_string(), oi);
+      k_old_method->name_and_sig_as_C_string(), oi));
     // advance to next pair of methods
     ++oi;
     ++ni;
@@ -1117,8 +1147,8 @@ int VM_RedefineClasses::calculate_redefinition_flags(instanceKlassHandle new_cla
       k_new_method->set_method_idnum(num);
       //swap_all_method_annotations(new_num, num, new_class);
     }
-    TRACE_RC1("Method added: new: %s [%d]",
-      k_new_method->name_and_sig_as_C_string(), ni);
+    RC_TRACE(0x00000001, ("Method added: new: %s [%d]",
+      k_new_method->name_and_sig_as_C_string(), ni));
     ++ni; // advance to next new method
     break;
   case deleted:
@@ -1131,8 +1161,8 @@ int VM_RedefineClasses::calculate_redefinition_flags(instanceKlassHandle new_cla
         // deleted methods must be private
         result = result | Klass::ModifyClass;
     }
-    TRACE_RC1("Method deleted: old: %s [%d]",
-      k_old_method->name_and_sig_as_C_string(), oi);
+    RC_TRACE(0x00000001, ("Method deleted: old: %s [%d]",
+      k_old_method->name_and_sig_as_C_string(), oi));
     ++oi; // advance to next old method
     break;
   default:
@@ -1309,20 +1339,21 @@ void VM_RedefineClasses::calculate_instance_update_information(klassOop new_vers
   ((instanceKlass*)new_version->klass_part())->store_update_information(result);
   ((instanceKlass*)new_version->klass_part())->set_copying_backwards(cl.does_copy_backwards());
 
-  IF_TRACE_RC2 {
-    TRACE_RC2("Instance update information for %s:", new_version->klass_part()->name()->as_C_string());
+  if (RC_TRACE_ENABLED(0x00000002))  {
+    RC_TRACE(0x00000002, ("Instance update information for %s:",
+      new_version->klass_part()->name()->as_C_string()));
     if (cl.does_copy_backwards()) {
-      TRACE_RC2("\tDoes copy backwards!");
+      RC_TRACE(0x00000002, ("\tDoes copy backwards!"));
     }
     for (int i=0; i<result.length(); i++) {
       int curNum = result.at(i);
       if (curNum < 0) {
-        TRACE_RC2("\t%d CLEAN", curNum);
+        RC_TRACE(0x00000002, ("\t%d CLEAN", curNum));
       } else if (curNum > 0) {
-        TRACE_RC2("\t%d COPY from %d", curNum, result.at(i + 1));
+        RC_TRACE(0x00000002, ("\t%d COPY from %d", curNum, result.at(i + 1)));
         i++;
       } else {
-        TRACE_RC2("\tEND");
+        RC_TRACE(0x00000002, ("\tEND"));
       }
     }
   }
@@ -1364,7 +1395,10 @@ void VM_RedefineClasses::calculate_type_check_information() {
               Symbol* name = signature_to_class_name(signature);
               klassOop field_klass;
               if (is_field_dangerous(name, fd, field_klass)) {
-                TRACE_RC2("Found dangerous field %s in klass %s of type %s", fd->name()->as_C_string(), fd->field_holder()->klass_part()->name()->as_C_string(), name->as_C_string());
+                RC_TRACE(0x00000002, ("Found dangerous field %s in klass %s of type %s",
+                  fd->name()->as_C_string(),
+                  fd->field_holder()->klass_part()->name()->as_C_string(),
+                  name->as_C_string()));
                 _arr->append(Pair<int, klassOop>(fd->offset(), field_klass->klass_part()->newest_version()));
               }
             }
@@ -1437,7 +1471,10 @@ bool VM_RedefineClasses::check_field_value_types() {
             if (element != NULL && element->blueprint()->newest_version()->klass_part()->is_redefining()) {
               // Check subtype relationship to static type of array
               if (!element->blueprint()->newest_version()->klass_part()->is_subtype_of(element_klass->klass_part()->newest_version())) {
-                TRACE_RC1("Array value is INVALID - abort redefinition (static_type=%s, index=%d, dynamic_type=%s)", element_klass->klass_part()->name()->as_C_string(), i, element->blueprint()->name()->as_C_string());
+                RC_TRACE(0x00000001, ("Array value is INVALID - abort redefinition (static_type=%s, index=%d, dynamic_type=%s)",
+                  element_klass->klass_part()->name()->as_C_string(),
+                  i,
+                  element->blueprint()->name()->as_C_string()));
                 _result = false;
                 break;
               }
@@ -1463,10 +1500,18 @@ bool VM_RedefineClasses::check_field_value_types() {
         // Field is not null
         if (field_value->klass()->klass_part()->newest_version()->klass_part()->is_subtype_of(static_type)) {
           // We are OK
-          TRACE_RC3("Field value is OK (klass=%s, static_type=%s, offset=%d, dynamic_type=%s)", obj->klass()->klass_part()->name()->as_C_string(), static_type->klass_part()->name()->as_C_string(), offset, field_value->klass()->klass_part()->name()->as_C_string());
+          RC_TRACE(0x00008000, ("Field value is OK (klass=%s, static_type=%s, offset=%d, dynamic_type=%s)",
+            obj->klass()->klass_part()->name()->as_C_string(),
+            static_type->klass_part()->name()->as_C_string(),
+            offset,
+            field_value->klass()->klass_part()->name()->as_C_string()));
         } else {
           // Failure!
-          TRACE_RC1("Field value is INVALID - abort redefinition (klass=%s, static_type=%s, offset=%d, dynamic_type=%s)", obj->klass()->klass_part()->name()->as_C_string(), static_type->klass_part()->name()->as_C_string(), offset, field_value->klass()->klass_part()->name()->as_C_string());
+          RC_TRACE(0x00000001, ("Field value is INVALID - abort redefinition (klass=%s, static_type=%s, offset=%d, dynamic_type=%s)",
+            obj->klass()->klass_part()->name()->as_C_string(),
+            static_type->klass_part()->name()->as_C_string(),
+            offset,
+            field_value->klass()->klass_part()->name()->as_C_string()));
           _result = false;
         }
       }
@@ -1516,14 +1561,14 @@ void VM_RedefineClasses::clear_type_check_information() {
 
 void VM_RedefineClasses::update_active_methods() {
 
-  TRACE_RC2("Updating active methods");
+  RC_TRACE(0x00000002, ("Updating active methods"));
   JavaThread *java_thread = Threads::first();
   while (java_thread != NULL) {
 
     int stack_depth = 0;
     if (java_thread->has_last_Java_frame()) {
 
-      TRACE_RC4("checking stack of Java thread %s", java_thread->name());
+      RC_TRACE(0x0000000400, ("checking stack of Java thread %s", java_thread->name()));
 
       // vframes are resource allocated
       Thread* current_thread = Thread::current();
@@ -1542,7 +1587,7 @@ void VM_RedefineClasses::update_active_methods() {
 
           if (!(jvf->method()->is_native())) {
             int bci = jvf->bci();
-            TRACE_RC4("found method: %s / bci=%d", jvf->method()->name()->as_C_string(), bci);
+            RC_TRACE(0x00000400, ("found method: %s / bci=%d", jvf->method()->name()->as_C_string(), bci));
             ResourceMark rm(Thread::current());
             HandleMark hm;
             instanceKlassHandle klass(jvf->method()->method_holder());
@@ -1550,9 +1595,10 @@ void VM_RedefineClasses::update_active_methods() {
             if (jvf->method()->new_version() != NULL && jvf->is_interpreted_frame()) {
 
               
-              TRACE_RC2("Found method that should just be updated to the newest version %s", jvf->method()->name_and_sig_as_C_string());
+              RC_TRACE(0x00000002, ("Found method that should just be updated to the newest version %s",
+                jvf->method()->name_and_sig_as_C_string()));
 
-              IF_TRACE_RC5 {
+              if (RC_TRACE_ENABLED(0x01000000)) {
                 int code_size = jvf->method()->code_size();
                 char *code_base_old = (char*)jvf->method()->code_base();
                 char *code_base_new = (char*)jvf->method()->new_version()->code_base();
@@ -1567,7 +1613,7 @@ void VM_RedefineClasses::update_active_methods() {
               interpretedVFrame *iframe = (interpretedVFrame *)jvf;
 
 
-              IF_TRACE_RC5 {
+              if (RC_TRACE_ENABLED(0x01000000)) {
                 constantPoolCacheOop cp_old = jvf->method()->constants()->cache();
                 tty->print_cr("old cp");
                 for (int i=0; i<cp_old->length(); i++) {
@@ -1581,7 +1627,7 @@ void VM_RedefineClasses::update_active_methods() {
               }
 
               iframe->set_method(jvf->method()->new_version(), bci);
-              TRACE_RC2("Updated method to newer version");
+              RC_TRACE(0x00000002, ("Updated method to newer version"));
               assert(jvf->method()->new_version() == NULL, "must be latest version");
 
             }
@@ -1605,7 +1651,7 @@ void VM_RedefineClasses::method_forwarding() {
     int stack_depth = 0;
     if (java_thread->has_last_Java_frame()) {
 
-      TRACE_RC4("checking stack of Java thread %s", java_thread->name());
+      RC_TRACE(0x00000400, ("checking stack of Java thread %s", java_thread->name()));
 
       // vframes are resource allocated
       Thread* current_thread = Thread::current();
@@ -1623,23 +1669,29 @@ void VM_RedefineClasses::method_forwarding() {
           javaVFrame *jvf = javaVFrame::cast(vf);
 
           if (!(jvf->method()->is_native())) {
-            TRACE_RC3("found method: %s", jvf->method()->name()->as_C_string());
+            RC_TRACE(0x00008000, ("found method: %s",
+              jvf->method()->name()->as_C_string()));
             ResourceMark rm(Thread::current());
             HandleMark hm;
             instanceKlassHandle klass(jvf->method()->method_holder());
             methodOop m = jvf->method();
             int bci = jvf->bci();
-            TRACE_RC3("klass redef %d", klass->is_redefining());
+            RC_TRACE(0x00008000, ("klass redef %d",
+              klass->is_redefining()));
 
             if (klass->new_version() != NULL && m->new_version() == NULL) {
-              TRACE_RC3("found potential forwarding method: %s", m->name()->as_C_string());
+              RC_TRACE(0x00008000, ("found potential forwarding method: %s",
+                m->name()->as_C_string()));
               
               klassOop new_klass = klass->newest_version();
               methodOop new_method = new_klass->klass_part()->lookup_method(m->name(), m->signature());
-              TRACE_RC2("%d %d", new_method, new_method->constMethod()->has_code_section_table());
+              RC_TRACE(0x00000002, ("%d %d",
+                new_method,
+                new_method->constMethod()->has_code_section_table()));
 
               if (new_method != NULL && new_method->constMethod()->has_code_section_table()) {
-                TRACE_RC3("found code section table for method: %s", new_method->name()->as_C_string());
+                RC_TRACE(0x00008000, ("found code section table for method: %s",
+                  new_method->name()->as_C_string()));
                 m->set_forward_method(new_method);
                 if (new_method->max_locals() != m->max_locals()) {
                   tty->print_cr("new_m max locals: %d old_m max locals: %d", new_method->max_locals(), m->max_locals());
@@ -1651,13 +1703,19 @@ void VM_RedefineClasses::method_forwarding() {
                     // We must transfer now and cannot delay until next NOP.
                     int new_bci = m->calculate_forward_bci(bci, new_method);
                     interpretedVFrame* iframe = interpretedVFrame::cast(jvf);
-                    TRACE_RC2("Transfering execution of %s to new method old_bci=%d new_bci=%d", new_method->name()->as_C_string(), bci, new_bci);
+                    RC_TRACE(0x00000002, ("Transfering execution of %s to new method old_bci=%d new_bci=%d",
+                      new_method->name()->as_C_string(),
+                      bci,
+                      new_bci));
                     iframe->set_method(new_method, new_bci);
                   } else {
-                    TRACE_RC2("Delaying method forwarding of %s because %d is not in a code section", new_method->name()->as_C_string(), bci);
+                    RC_TRACE(0x00000002, ("Delaying method forwarding of %s because %d is not in a code section",
+                      new_method->name()->as_C_string(),
+                      bci));
                   }
                 } else {
-                  TRACE_RC2("Delaying method forwarding of %s because method is compiled", new_method->name()->as_C_string());
+                  RC_TRACE(0x00000002, ("Delaying method forwarding of %s because method is compiled",
+                    new_method->name()->as_C_string()));
                 }
               }
             }
@@ -1671,7 +1729,8 @@ void VM_RedefineClasses::method_forwarding() {
     java_thread = java_thread->next();
   }
 
-  TRACE_RC1("Method forwarding applied to %d methods", forwarding_count);
+  RC_TRACE(0x00000001, ("Method forwarding applied to %d methods",
+    forwarding_count));
 }
 
 bool VM_RedefineClasses::check_method_stacks() {
@@ -1682,7 +1741,7 @@ bool VM_RedefineClasses::check_method_stacks() {
     int stack_depth = 0;
     if (java_thread->has_last_Java_frame()) {
 
-      TRACE_RC4("checking stack of Java thread %s", java_thread->name());
+      RC_TRACE(0x00000400, ("checking stack of Java thread %s", java_thread->name()));
 
       // vframes are resource allocated
       Thread* current_thread = Thread::current();
@@ -1700,7 +1759,7 @@ bool VM_RedefineClasses::check_method_stacks() {
           javaVFrame *jvf = javaVFrame::cast(vf);
 
           if (!(jvf->method()->is_native())) {
-            TRACE_RC4("found method: %s", jvf->method()->name()->as_C_string());
+            RC_TRACE(0x00000400, ("found method: %s", jvf->method()->name()->as_C_string()));
             ResourceMark rm(Thread::current());
             HandleMark hm;
             instanceKlassHandle klass(jvf->method()->method_holder());
@@ -1738,11 +1797,14 @@ bool VM_RedefineClasses::check_method_stacks() {
                           // Field is not null
                           if (cur->klass_part()->newest_version()->klass_part()->is_subtype_of(local_klass)) {
                             // We are OK
-                            TRACE_RC3("Local variable value is OK (local_klass=%s, cur_klass=%s)", local_klass->klass_part()->name()->as_C_string(), cur->klass_part()->name()->as_C_string());
+                            RC_TRACE(0x00008000, ("Local variable value is OK (local_klass=%s, cur_klass=%s)",
+                              local_klass->klass_part()->name()->as_C_string(), cur->klass_part()->name()->as_C_string()));
                             result = true;
                           } else {
                             // Failure!
-                            TRACE_RC1("Local variable value is INVALID - abort redefinition (local_klass=%s, cur_klass=%s)", local_klass->klass_part()->name()->as_C_string(), cur->klass_part()->name()->as_C_string());
+                            RC_TRACE(0x00000001, ("Local variable value is INVALID - abort redefinition (local_klass=%s, cur_klass=%s)",
+                              local_klass->klass_part()->name()->as_C_string(),
+                              cur->klass_part()->name()->as_C_string()));
                             return false;
                           }
                         }
@@ -1751,14 +1813,16 @@ bool VM_RedefineClasses::check_method_stacks() {
                       elem++;
                     }
                   } else {
-                    TRACE_RC2("Method %s does not have a local variable table => abort", method->name_and_sig_as_C_string());
+                    RC_TRACE(0x00000002, ("Method %s does not have a local variable table => abort",
+                      method->name_and_sig_as_C_string()));
                   }
                   
                   if (!result) {
                     return false;
                   }
 
-                  TRACE_RC3("Verifying class %s", jvf->method()->method_holder()->klass_part()->name()->as_C_string());
+                  RC_TRACE(0x00008000, ("Verifying class %s",
+                    jvf->method()->method_holder()->klass_part()->name()->as_C_string()));
 
                   Symbol* exception_name;
                   const size_t message_buffer_len = klass->name()->utf8_length() + 1024;
@@ -1780,9 +1844,12 @@ bool VM_RedefineClasses::check_method_stacks() {
 
                   if (exception_name != NULL) {
                  
-                    TRACE_RC1("Verification of class %s failed", jvf->method()->method_holder()->klass_part()->name()->as_C_string());
-                    TRACE_RC1("Exception: %s", exception_name->as_C_string());
-                    TRACE_RC1("Message: %s", message_buffer);
+                    RC_TRACE(0x00000001, ("Verification of class %s failed",
+                      jvf->method()->method_holder()->klass_part()->name()->as_C_string()));
+                    RC_TRACE(0x00000001, ("Exception: %s",
+                      exception_name->as_C_string()));
+                    RC_TRACE(0x00000001, ("Message: %s",
+                      message_buffer));
                     Thread::current()->clear_pending_exception();
                     return false;
                   } 
@@ -1868,7 +1935,10 @@ bool VM_RedefineClasses::check_loaded_methods() {
           case JVM_CONSTANT_Class:
             k = cp->klass_at(i, CHECK_(true));
             if (is_class_dangerous(k)) {
-              TRACE_RC2("Class %s is potentially affected, because at cp[%d] references class %s", klass->name()->as_C_string(), i, k->klass_part()->name()->as_C_string());
+              RC_TRACE(0x00000002, ("Class %s is potentially affected, because at cp[%d] references class %s",
+                klass->name()->as_C_string(),
+                i,
+                k->klass_part()->name()->as_C_string()));
               return true;
             }
             break;
@@ -1940,7 +2010,9 @@ bool VM_RedefineClasses::check_loaded_methods() {
     bool is_symbol_dangerous(Symbol* symbol) {
       for (int i=0; i<_dangerous_klasses->length(); i++) {
         if(_dangerous_klasses->at(i)->klass_part()->name() == symbol) {
-          TRACE_RC2("Found constant pool index %d references class %s", i, symbol->as_C_string());
+          RC_TRACE(0x00000002, ("Found constant pool index %d references class %s",
+            i,
+            symbol->as_C_string()));
           return true;
         }
       }
@@ -1958,26 +2030,26 @@ bool VM_RedefineClasses::check_loaded_methods() {
       instanceKlass *klass = instanceKlass::cast(klassObj);
       instanceKlassHandle handle(klassObj);
 
-      TRACE_RC4("Check if verification is necessary for class %s major_version=%d", handle->name()->as_C_string(), handle->major_version());
+      RC_TRACE(0x00000400, ("Check if verification is necessary for class %s major_version=%d", handle->name()->as_C_string(), handle->major_version()));
 
       if (!can_be_affected(klass)) {
-        TRACE_RC4("Skipping verification of class %s major_version=%d", handle->name()->as_C_string(), handle->major_version());
+        RC_TRACE(0x00000400, ("Skipping verification of class %s major_version=%d", handle->name()->as_C_string(), handle->major_version()));
         return;
       }
 
       if (handle->major_version() < Verifier::STACKMAP_ATTRIBUTE_MAJOR_VERSION) {
-        TRACE_RC1("Failing because cannot verify class %s major_version=%d", handle->name()->as_C_string(), handle->major_version());
+        RC_TRACE(0x00000001, ("Failing because cannot verify class %s major_version=%d", handle->name()->as_C_string(), handle->major_version()));
         _result = false;
         return;
       }
 
-      TRACE_RC3("Verifying class %s", handle->name()->as_C_string());
+      RC_TRACE(0x00000001, ("Verifying class %s", handle->name()->as_C_string()));
 
       if (!Verifier::verify(handle, Verifier::NoException, true, false, Thread::current())) {
         
-        TRACE_RC1("Verification of class %s failed", handle->name()->as_C_string());
+        RC_TRACE(0x00000001, ("Verification of class %s failed", handle->name()->as_C_string()));
         //Symbol* ex_name = PENDING_EXCEPTION->klass()->klass_part()->name();
-        //TRACE_RC2("exception when verifying class: '%s'", ex_name->as_C_string());
+        //RC_TRACE(0x00000002, ("exception when verifying class: '%s'", ex_name->as_C_string());
         //PENDING_EXCEPTION->print();
         CLEAR_PENDING_EXCEPTION;
         _result = false;
@@ -1987,7 +2059,7 @@ bool VM_RedefineClasses::check_loaded_methods() {
       for (int i=0; i<method_count; i++) {
         methodOop cur_method = (methodOop)klass->methods()->obj_at(i);
         if (!check_method(cur_method)) {
-          TRACE_RC1("Failed to verify consistency of method %s of klass %s", cur_method->name()->as_C_string(), klass->name()->as_C_string());
+          RC_TRACE(0x00000001, ("Failed to verify consistency of method %s of klass %s", cur_method->name()->as_C_string(), klass->name()->as_C_string());
         }
       }*/
     }
@@ -2020,35 +2092,35 @@ bool VM_RedefineClasses::check_type_consistency() {
   bool result = check_field_value_types();
   clear_type_check_information();
   if (!result) {
-    TRACE_RC1("Aborting redefinition because of wrong field or array element value!");
+    RC_TRACE(0x00000001, ("Aborting redefinition because of wrong field or array element value!"));
     Universe::set_verify_in_progress(false);
     return false;
   }
 
   result = check_method_stacks();
   if (!result) {
-    TRACE_RC1("Aborting redefinition because of wrong value on the stack");
+    RC_TRACE(0x00000001, ("Aborting redefinition because of wrong value on the stack"));
     Universe::set_verify_in_progress(false);
     return false;
   }
 
   result = check_loaded_methods();
   if (!result) {
-    TRACE_RC1("Aborting redefinition because of wrong loaded method");
+    RC_TRACE(0x00000001, ("Aborting redefinition because of wrong loaded method"));
     Universe::set_verify_in_progress(false);
     return false;
   }
 
-  TRACE_RC1("Verification passed => hierarchy change is valid!");
+  RC_TRACE(0x00000001, ("Verification passed => hierarchy change is valid!"));
   Universe::set_verify_in_progress(false);
   return true;
 }
 
 void VM_RedefineClasses::rollback() {
-  TRACE_RC1("Rolling back redefinition!");
+  RC_TRACE(0x00000001, ("Rolling back redefinition!"));
   SystemDictionary::rollback_redefinition();
 
-  TRACE_RC1("After rolling back system dictionary!");
+  RC_TRACE(0x00000001, ("After rolling back system dictionary!"));
   for (int i=0; i<_new_classes->length(); i++) {
     SystemDictionary::remove_from_hierarchy(_new_classes->at(i));
   }
@@ -2098,7 +2170,7 @@ void VM_RedefineClasses::swap_marks(oop first, oop second) {
 void VM_RedefineClasses::doit() {
   Thread *thread = Thread::current();
 
-  TRACE_RC1("Entering doit!");
+  RC_TRACE(0x00000001, ("Entering doit!"));
 
 
   if ((_max_redefinition_flags & Klass::RemoveSuperType) != 0) {
@@ -2108,7 +2180,7 @@ void VM_RedefineClasses::doit() {
     if (!check_type_consistency()) {
       // (tw) TODO: Rollback the class redefinition
       rollback();
-      TRACE_RC1("Detected type inconsistency!");
+      RC_TRACE(0x00000001, ("Detected type inconsistency!"));
       _result = JVMTI_ERROR_UNSUPPORTED_REDEFINITION_HIERARCHY_CHANGED;
       RC_TIMER_STOP(_timer_check_type);
       return;
@@ -2117,11 +2189,11 @@ void VM_RedefineClasses::doit() {
     RC_TIMER_STOP(_timer_check_type);
 
   } else {
-    TRACE_RC1("No type narrowing => skipping check for type inconsistency");
+    RC_TRACE(0x00000001, ("No type narrowing => skipping check for type inconsistency"));
   }
 
   if (UseMethodForwardPoints) {
-    TRACE_RC1("Check stack for forwarding methods to new version");
+    RC_TRACE(0x00000001, ("Check stack for forwarding methods to new version"));
     method_forwarding();
   }
 
@@ -2131,7 +2203,7 @@ void VM_RedefineClasses::doit() {
     // a shared class. We do the remap during the doit() phase of
     // the safepoint to be safer.
     if (!CompactingPermGenGen::remap_shared_readonly_as_readwrite()) {
-      TRACE_RC1("failed to remap shared readonly space to readwrite, private");
+      RC_TRACE(0x00000001, ("failed to remap shared readonly space to readwrite, private"));
       _result = JVMTI_ERROR_INTERNAL;
       return;
     }
@@ -2244,22 +2316,22 @@ void VM_RedefineClasses::doit() {
   if (objectClosure.needs_instance_update()){
 
     // Do a full garbage collection to update the instance sizes accordingly
-    TRACE_RC1("Before performing full GC!");
+    RC_TRACE(0x00000001, ("Before performing full GC!"));
     Universe::set_redefining_gc_run(true);
     JvmtiGCMarker jgcm;
     notify_gc_begin(true);
     Universe::heap()->collect_as_vm_thread(GCCause::_heap_inspection);
     notify_gc_end();
     Universe::set_redefining_gc_run(false);
-    TRACE_RC1("GC done!");
+    RC_TRACE(0x00000001, ("GC done!"));
   }
 
 
-  IF_TRACE_RC1 {
+  if (RC_TRACE_ENABLED(0x00000001)) {
     if (_updated_oops != NULL) {
-      TRACE_RC1("%d object(s) updated!", _updated_oops->length());
+      RC_TRACE(0x00000001, ("%d object(s) updated!", _updated_oops->length()));
     } else {
-      TRACE_RC1("No objects updated!");
+      RC_TRACE(0x00000001, ("No objects updated!"));
     }
   }
 
@@ -2337,7 +2409,7 @@ void VM_RedefineClasses::doit_epilogue() {
   ResourceMark mark;
 
   VM_GC_Operation::doit_epilogue();
-  TRACE_RC1("GC Operation epilogue finished! ");  
+  RC_TRACE(0x00000001, ("GC Operation epilogue finished! "));
 
   GrowableArray<methodHandle> instanceTransformerMethods;
 
@@ -2350,7 +2422,7 @@ void VM_RedefineClasses::doit_epilogue() {
 
     if (klass->check_redefinition_flag(Klass::HasInstanceTransformer)) {
 
-      TRACE_RC5("Call instance transformer of %s instance", klass->name()->as_C_string());
+      RC_TRACE(0x00008000, ("Call instance transformer of %s instance", klass->name()->as_C_string()));
       klassOop cur_klass = klass();
       while (cur_klass != NULL) {
         methodOop method = ((instanceKlass*)cur_klass->klass_part())->find_method(vmSymbols::transformer_name(), vmSymbols::void_method_signature());
@@ -2381,7 +2453,7 @@ void VM_RedefineClasses::doit_epilogue() {
 
         methodHandle method = instanceTransformerMethods.at(klass->redefinition_index());
 
-        TRACE_RC5("executing transformer method");
+        RC_TRACE(0x00008000, ("executing transformer method"));
         
         Thread *__the_thread__ = Thread::current();
         JavaValue result(T_VOID);
@@ -2394,7 +2466,8 @@ void VM_RedefineClasses::doit_epilogue() {
         // TODO: What to do with an exception here?
         if (HAS_PENDING_EXCEPTION) {
           Symbol* ex_name = PENDING_EXCEPTION->klass()->klass_part()->name();
-          TRACE_RC2("exception when executing transformer: '%s'", ex_name->as_C_string());
+          RC_TRACE(0x00000002, ("exception when executing transformer: '%s'",
+            ex_name->as_C_string()));
           CLEAR_PENDING_EXCEPTION;
         }
       }
@@ -2407,7 +2480,7 @@ void VM_RedefineClasses::doit_epilogue() {
   // Free the array of scratch classes
   delete _new_classes;
   _new_classes = NULL;
-  TRACE_RC1("Redefinition finished!");  
+  RC_TRACE(0x00000001, ("Redefinition finished!"));
 
   RC_TIMER_STOP(_timer_vm_op_epilogue);
 }
@@ -2499,7 +2572,7 @@ void VM_RedefineClasses::adjust_cpool_cache(klassOop k_oop_latest, oop initiatin
 void VM_RedefineClasses::update_jmethod_ids() {
   for (int j = 0; j < _matching_methods_length; ++j) {
     methodOop old_method = (methodOop)_old_methods->obj_at(_matching_old_methods[j]);
-    TRACE_RC3("matching method %s", old_method->name_and_sig_as_C_string());
+    RC_TRACE(0x00008000, ("matching method %s", old_method->name_and_sig_as_C_string()));
     
     jmethodID jmid = old_method->find_jmethod_id_or_null();
     if (old_method->new_version() != NULL && jmid == NULL) {
@@ -2514,21 +2587,21 @@ void VM_RedefineClasses::update_jmethod_ids() {
         methodHandle old_method_h((methodOop)_old_methods->obj_at(_matching_old_methods[j]));
         jmethodID new_jmethod_id = JNIHandles::make_jmethod_id(old_method_h);
         bool result = instanceKlass::cast(old_method_h->method_holder())->update_jmethod_id(old_method_h(), new_jmethod_id);
-        //TRACE_RC3("Changed jmethodID for old method assigned to %d / result=%d", new_jmethod_id, result);
-        //TRACE_RC3("jmethodID new method: %d jmethodID old method: %d", new_method_h->jmethod_id(), old_method->jmethod_id());
+        //RC_TRACE(0x00008000, ("Changed jmethodID for old method assigned to %d / result=%d", new_jmethod_id, result);
+        //RC_TRACE(0x00008000, ("jmethodID new method: %d jmethodID old method: %d", new_method_h->jmethod_id(), old_method->jmethod_id());
       } else {
         jmethodID mid = new_method_h->jmethod_id();
         bool result = instanceKlass::cast(new_method_h->method_holder())->update_jmethod_id(new_method_h(), jmid);
-        //TRACE_RC3("Changed jmethodID for new method assigned to %d / result=%d", jmid, result);
+        //RC_TRACE(0x00008000, ("Changed jmethodID for new method assigned to %d / result=%d", jmid, result);
 
       }
       JNIHandles::change_method_associated_with_jmethod_id(jmid, new_method_h);
-      //TRACE_RC3("changing method associated with jmethod id %d to %s", (int)jmid, new_method_h->name()->as_C_string());
+      //RC_TRACE(0x00008000, ("changing method associated with jmethod id %d to %s", (int)jmid, new_method_h->name()->as_C_string());
       assert(JNIHandles::resolve_jmethod_id(jmid) == (methodOop)_new_methods->obj_at(_matching_new_methods[j]), "should be replaced");
       jmethodID mid = ((methodOop)_new_methods->obj_at(_matching_new_methods[j]))->jmethod_id();
       assert(JNIHandles::resolve_non_null((jobject)mid) == new_method_h(), "must match!");
 
-      //TRACE_RC3("jmethodID new method: %d jmethodID old method: %d", new_method_h->jmethod_id(), old_method->jmethod_id());
+      //RC_TRACE(0x00008000, ("jmethodID new method: %d jmethodID old method: %d", new_method_h->jmethod_id(), old_method->jmethod_id());
     }
   }
 }
@@ -2635,7 +2708,8 @@ void VM_RedefineClasses::compute_added_deleted_matching_methods() {
   }
   assert(_matching_methods_length + _deleted_methods_length == _old_methods->length(), "sanity");
   assert(_matching_methods_length + _added_methods_length == _new_methods->length(), "sanity");
-  TRACE_RC3("Matching methods = %d / deleted methods = %d / added methods = %d", _matching_methods_length, _deleted_methods_length, _added_methods_length);
+  RC_TRACE(0x00008000, ("Matching methods = %d / deleted methods = %d / added methods = %d",
+    _matching_methods_length, _deleted_methods_length, _added_methods_length));
 }
 
 
@@ -2725,7 +2799,7 @@ void VM_RedefineClasses::redefine_single_class(instanceKlassHandle the_new_class
 
 
 void VM_RedefineClasses::check_methods_and_mark_as_obsolete(BitMap *emcp_methods, int * emcp_method_count_p) {
-    TRACE_RC3("Checking matching methods for EMCP");
+    RC_TRACE(0x00008000, ("Checking matching methods for EMCP"));
     *emcp_method_count_p = 0;
     int obsolete_count = 0;
     int old_index = 0;
@@ -2770,16 +2844,17 @@ void VM_RedefineClasses::check_methods_and_mark_as_obsolete(BitMap *emcp_methods
         old_method->set_new_version(new_method);
         new_method->set_old_version(old_method);
 
-        TRACE_RC3("Found EMCP method %s", old_method->name_and_sig_as_C_string());
+        RC_TRACE(0x00008000, ("Found EMCP method %s", old_method->name_and_sig_as_C_string()));
 
         // Transfer breakpoints
         instanceKlass *ik = instanceKlass::cast(old_method->method_holder());
         for (BreakpointInfo* bp = ik->breakpoints(); bp != NULL; bp = bp->next()) {
-          TRACE_RC2("Checking breakpoint");
-          TRACE_RC2("%d / %d", bp->match(old_method), bp->match(new_method));
+          RC_TRACE(0x00000002, ("Checking breakpoint"));
+          RC_TRACE(0x00000002, ("%d / %d",
+            bp->match(old_method), bp->match(new_method)));
           if (bp->match(old_method)) {
             assert(bp->match(new_method), "if old method is method, then new method must match too");
-            TRACE_RC2("Found a breakpoint in an old EMCP method");
+            RC_TRACE(0x00000002, ("Found a breakpoint in an old EMCP method"));
             new_method->set_breakpoint(bp->bci());
           }
         }
@@ -2794,9 +2869,9 @@ void VM_RedefineClasses::check_methods_and_mark_as_obsolete(BitMap *emcp_methods
         // With tracing we try not to "yack" too much. The position of
         // this trace assumes there are fewer obsolete methods than
         // EMCP methods.
-        TRACE_RC3("mark %s(%s) as obsolete",
+        RC_TRACE(0x00008000, ("mark %s(%s) as obsolete",
           old_method->name()->as_C_string(),
-          old_method->signature()->as_C_string());
+          old_method->signature()->as_C_string()));
       }
       old_method->set_is_old();
     }
@@ -2813,12 +2888,12 @@ void VM_RedefineClasses::check_methods_and_mark_as_obsolete(BitMap *emcp_methods
       // With tracing we try not to "yack" too much. The position of
       // this trace assumes there are fewer obsolete methods than
       // EMCP methods.
-      TRACE_RC3("mark deleted %s(%s) as obsolete",
+      RC_TRACE(0x00008000, ("mark deleted %s(%s) as obsolete",
         old_method->name()->as_C_string(),
-        old_method->signature()->as_C_string());
+        old_method->signature()->as_C_string()));
     }
     //assert((*emcp_method_count_p + obsolete_count) == _old_methods->length(), "sanity check");
-    TRACE_RC3("EMCP_cnt=%d, obsolete_cnt=%d !", *emcp_method_count_p, obsolete_count);
+    RC_TRACE(0x00008000, ("EMCP_cnt=%d, obsolete_cnt=%d !", *emcp_method_count_p, obsolete_count));
 }
 
 // Increment the classRedefinedCount field in the specific instanceKlass
@@ -2828,7 +2903,7 @@ void VM_RedefineClasses::increment_class_counter(instanceKlass *ik, TRAPS) {
   klassOop class_oop = java_lang_Class::as_klassOop(class_mirror);
   int new_count = java_lang_Class::classRedefinedCount(class_mirror) + 1;
   java_lang_Class::set_classRedefinedCount(class_mirror, new_count);
-  TRACE_RC3("updated count for class=%s to %d", ik->external_name(), new_count);
+  RC_TRACE(0x00008000, ("updated count for class=%s to %d", ik->external_name(), new_count));
 }
 
 #ifndef PRODUCT
@@ -2842,8 +2917,10 @@ void VM_RedefineClasses::check_class(klassOop k_oop, TRAPS) {
     if (ik->vtable_length() > 0) {
       ResourceMark rm(THREAD);
       if (!ik->vtable()->check_no_old_entries()) {
-        TRACE_RC1("size of class: %d\n", k_oop->size());
-        TRACE_RC1("klassVtable::check_no_old_entries failure -- OLD method found -- class: %s", ik->signature_name());
+        RC_TRACE(0x00000001, ("size of class: %d\n",
+          k_oop->size()));
+        RC_TRACE(0x00000001, ("klassVtable::check_no_old_entries failure -- OLD method found -- class: %s",
+          ik->signature_name()));
         assert(false, "OLD method found");
       }
 
@@ -2871,7 +2948,7 @@ void VM_RedefineClasses::FindAffectedKlassesClosure::do_object( oop obj )
   for(int i=0; i<_original_klasses->length(); i++) {
     instanceKlassHandle cur = _original_klasses->at(i);
     if (cur() != klass && klass->klass_part()->is_subtype_of(cur()) && !_original_klasses->contains(klass)) {  
-      TRACE_RC3("Found affected class: %s", klass->klass_part()->name()->as_C_string());
+      RC_TRACE(0x00008000, ("Found affected class: %s", klass->klass_part()->name()->as_C_string()));
       _result->append(klass);
       break;
     }
@@ -2895,19 +2972,20 @@ jvmtiError VM_RedefineClasses::do_topological_class_sorting( const jvmtiClassDef
     ClassFileParser cfp(&st);
 
     GrowableArray<Symbol*> symbolArr;
-    TRACE_RC2("Before find super symbols of class %s", the_class->name()->as_C_string());
+    RC_TRACE(0x00000002, ("Before find super symbols of class %s",
+      the_class->name()->as_C_string()));
     cfp.findSuperSymbols(the_class->name(), the_class_loader, protection_domain, the_class, symbolArr, THREAD);
     
     for (int j=0; j<symbolArr.length(); j++) {
       Symbol* sym = symbolArr.at(j);
 
-      TRACE_RC3("Before adding link to super class %s", sym->as_C_string());
+      RC_TRACE(0x00008000, ("Before adding link to super class %s", sym->as_C_string()));
 
       for (int k=0; k<arr->length(); k++) {
         klassOop curOop = arr->at(k)();
         // (tw) TODO: Check if we get aliasing problems with different class loaders?
         if (curOop->klass_part()->name() == sym /*&& curOop->klass_part()->class_loader() == the_class_loader()*/) {
-          TRACE_RC2("Found class to link");
+          RC_TRACE(0x00000002, ("Found class to link"));
           links->append(Pair<klassOop, klassOop>(curOop, the_class()));
           break;
         }
@@ -2916,7 +2994,7 @@ jvmtiError VM_RedefineClasses::do_topological_class_sorting( const jvmtiClassDef
   }
 
 
-  TRACE_RC1("Identified links between classes! ");
+  RC_TRACE(0x00000001, ("Identified links between classes! "));
 
   for (int i=0; i<affected->length(); i++) {
 
@@ -2936,11 +3014,12 @@ jvmtiError VM_RedefineClasses::do_topological_class_sorting( const jvmtiClassDef
     }
   }
 
-  IF_TRACE_RC2 {
-    TRACE_RC2("Identified links: ");
+  if (RC_TRACE_ENABLED(0x00000002))  {
+    RC_TRACE(0x00000002, ("Identified links: "));
     for (int i=0; i<links->length(); i++) {
-      TRACE_RC2("%s to %s", links->at(i).left()->klass_part()->name()->as_C_string(),
-        links->at(i).right()->klass_part()->name()->as_C_string());
+      RC_TRACE(0x00000002, ("%s to %s",
+        links->at(i).left()->klass_part()->name()->as_C_string(),
+        links->at(i).right()->klass_part()->name()->as_C_string()));
     }
   }
 
@@ -2998,7 +3077,8 @@ void VM_RedefineClasses::transfer_special_access_flags(fieldDescriptor *from, fi
   to->set_is_field_modification_watched(from->is_field_modification_watched());
   to->set_is_field_access_watched(from->is_field_access_watched());
   if (from->is_field_modification_watched() || from->is_field_access_watched()) {
-    TRACE_RC2("Transfered watch for field %s", from->name()->as_C_string());
+    RC_TRACE(0x00000002, ("Transfered watch for field %s",
+      from->name()->as_C_string()));
   }
   update_klass_field_access_flag(to);
 }
@@ -3131,7 +3211,7 @@ public:
           new_method->set_native_function(old_method->native_function(),
             !methodOopDesc::native_bind_event_is_interesting);
 
-          TRACE_RC3("Transfering native function for method %s", old_method->name()->as_C_string());
+          RC_TRACE(0x00008000, ("Transfering native function for method %s", old_method->name()->as_C_string()));
         }
       }
     }

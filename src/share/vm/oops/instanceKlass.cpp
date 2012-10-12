@@ -249,8 +249,8 @@ void instanceKlass::initialize(TRAPS) {
 
 
 void instanceKlass::initialize_redefined_class() {
-
-  TRACE_RC3("initializing redefined class %s", name()->as_C_string());
+  RC_TRACE(0x00000400, ("initializing redefined class %s",
+    name()->as_C_string()));
   
   assert(!is_initialized(), "");
   assert(this->old_version() != NULL, "");
@@ -279,7 +279,8 @@ void instanceKlass::initialize_redefined_class() {
         oop new_location = this_oop();
         oop old_location = this_oop->old_version();
         int offset = fd->offset();
-        TRACE_RC3("Copying static field value for field %s old_offset=%d new_offset=%d", fd->name()->as_C_string(), old_offset, offset);
+        RC_TRACE(0x00000400, ("Copying static field value for field %s old_offset=%d new_offset=%d",
+          fd->name()->as_C_string(), old_offset, offset));
 
         oop cur_oop;
 
@@ -338,8 +339,8 @@ void instanceKlass::initialize_redefined_class() {
             ShouldNotReachHere();
         }
       } else {
-
-        TRACE_RC2("New static field %s has_initial_value=%d", fd->name()->as_C_string(), (int)(fd->has_initial_value()));
+        RC_TRACE(0x00000200, ("New static field %s has_initial_value=%d",
+          fd->name()->as_C_string(), (int)(fd->has_initial_value())));
         // field not found
         // (tw) TODO: Probably this call is not necessary here!
         // FIXME: idubrov
@@ -928,7 +929,7 @@ void instanceKlass::call_class_initializer_impl(instanceKlassHandle this_oop, TR
     }
     methodHandle method(m);
     if (method() != NULL && method()->is_static()) {
-      TRACE_RC2("Calling static transformer instead of static initializer");
+      RC_TRACE(0x00000200, ("Calling static transformer instead of static initializer"));
       h_method = method;
     } else if (!((instanceKlass*)this_oop->old_version()->klass_part())->is_not_initialized()) {
       // Only execute the static initializer, if it was not yet executed for the old version of the class.
@@ -2819,8 +2820,9 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
                             GrowableArray<PreviousVersionNode *>(2, true);
   }
 
-  TRACE_RC3("adding previous version ref for %s @%d, EMCP_cnt=%d",
-    ikh->external_name(), _previous_versions->length(), emcp_method_count);
+  // RC_TRACE macro has an embedded ResourceMark
+  RC_TRACE(0x00000100, ("adding previous version ref for %s @%d, EMCP_cnt=%d",
+    ikh->external_name(), _previous_versions->length(), emcp_method_count));
   constantPoolHandle cp_h(ikh->constants());
   jobject cp_ref;
   if (cp_h->is_shared()) {
@@ -2836,7 +2838,8 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
   if (emcp_method_count == 0) {
     // non-shared ConstantPool gets a weak reference
     pv_node = new PreviousVersionNode(cp_ref, !cp_h->is_shared(), NULL);
-    TRACE_RC3("add: all methods are obsolete; flushing any EMCP weak refs");
+    RC_TRACE(0x00000400,
+      ("add: all methods are obsolete; flushing any EMCP weak refs"));
   } else {
     int local_count = 0;
     GrowableArray<jweak>* method_refs = new (ResourceObj::C_HEAP)
@@ -2865,7 +2868,8 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
   // caller is the VMThread and we are at a safepoint, this is a good
   // time to clear out unused weak references.
 
-  TRACE_RC3("add: previous version length=%d", _previous_versions->length());
+  RC_TRACE(0x00000400, ("add: previous version length=%d",
+    _previous_versions->length()));
 
   // skip the last entry since we just added it
   for (int i = _previous_versions->length() - 2; i >= 0; i--) {
@@ -2890,12 +2894,13 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
       // do anything special with the index.
       continue;
     } else {
-      TRACE_RC3("add: previous version @%d is alive", i);
+      RC_TRACE(0x00000400, ("add: previous version @%d is alive", i));
     }
 
     GrowableArray<jweak>* method_refs = pv_node->prev_EMCP_methods();
     if (method_refs != NULL) {
-      TRACE_RC3("add: previous methods length=%d", method_refs->length());
+      RC_TRACE(0x00000400, ("add: previous methods length=%d",
+        method_refs->length()));
       for (int j = method_refs->length() - 1; j >= 0; j--) {
         jweak method_ref = method_refs->at(j);
         assert(method_ref != NULL, "weak method ref was unexpectedly cleared");
@@ -2914,8 +2919,11 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
           JNIHandles::destroy_weak_global(method_ref);
           method_refs->remove_at(j);
         } else {
-          TRACE_RC3("add: %s(%s): previous method @%d in version @%d is alive",
-            method->name()->as_C_string(), method->signature()->as_C_string(), j, i);
+          // RC_TRACE macro has an embedded ResourceMark
+          RC_TRACE(0x00000400,
+            ("add: %s(%s): previous method @%d in version @%d is alive",
+            method->name()->as_C_string(), method->signature()->as_C_string(),
+            j, i));
         }
       }
     }
@@ -2998,8 +3006,9 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
               // The current RedefineClasses() call has made all EMCP
               // versions of this method obsolete so mark it as obsolete
               // and remove the weak ref.
-              TRACE_RC3("add: %s(%s): flush obsolete method @%d in version @%d",
-                m_name->as_C_string(), m_signature->as_C_string(), k, j);
+              RC_TRACE(0x00000400,
+                ("add: %s(%s): flush obsolete method @%d in version @%d",
+                m_name->as_C_string(), m_signature->as_C_string(), k, j));
 
               method->set_is_obsolete();
               JNIHandles::destroy_weak_global(method_ref);

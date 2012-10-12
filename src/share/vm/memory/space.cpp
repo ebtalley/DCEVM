@@ -479,7 +479,7 @@ void ContiguousSpace::prepare_for_compaction(CompactPoint* cp) {
     return;
   }
 
-   /* Compute the new addresses for the live objects and store it in the mark 
+  /* Compute the new addresses for the live objects and store it in the mark 
    * Used by universe::mark_sweep_phase2()                                   
    */                                                                        
   HeapWord* compact_top; /* This is where we are currently compacting to. */ 
@@ -507,8 +507,9 @@ void ContiguousSpace::prepare_for_compaction(CompactPoint* cp) {
    * by the MarkSweepAlwaysCompactCount parameter.                           
    */                                                                        
   int invocations = SharedHeap::heap()->perm_gen()->stat_record()->invocations;
-  bool skip_dead = ((invocations % MarkSweepAlwaysCompactCount) != 0);       
-                                                                             
+  bool skip_dead = (MarkSweepAlwaysCompactCount < 1)
+    ||((invocations % MarkSweepAlwaysCompactCount) != 0);
+
   size_t allowed_deadspace = 0;                                              
   if (skip_dead) {                                                           
     int ratio = (int)allowed_dead_ratio();                                        
@@ -538,13 +539,14 @@ void ContiguousSpace::prepare_for_compaction(CompactPoint* cp) {
       /* size_t size = oop(q)->size();  changing this for cms for perm gen */
       size_t size = block_size(q);     
 
+      // DCEVM: begin
+      //////////////////////////////////////////////////////////////////////////
       size_t forward_size = size;
       
-      //////////////////////////////////////////////////////////////////////////
       // Compute the forward sizes and leave out objects whose position could
       // possibly overlap other objects.
 
-      // (tw) There is a new version of the class of q => different size
+      // DCEVM: There is a new version of the class of q => different size
       if (oop(q)->blueprint()->new_version() != NULL && oop(q)->blueprint()->new_version()->klass_part()->update_information() != NULL) {
       
         size_t new_size = oop(q)->size_given_klass(oop(q)->blueprint()->new_version()->klass_part());
@@ -571,9 +573,8 @@ void ContiguousSpace::prepare_for_compaction(CompactPoint* cp) {
         first_dead = q;
       }
       //////////////////////////////////////////////////////////////////////////
-
-      end_of_live = q + size; //forward_size;     
       q += size;                                                          
+      end_of_live = q;
     } else {                                                                 
       /* run over all the contiguous dead objects */                         
       HeapWord* end = q;                                                     
@@ -662,13 +663,14 @@ void ContiguousSpace::prepare_for_compaction(CompactPoint* cp) {
   }                                                                          
   _first_dead = first_dead;    
 
-  if (_first_dead > top()) {
-    _first_dead = top();
-  }
-
-  if (_end_of_live > top()) {
-    _end_of_live = top();
-  }
+// FIXME: idubrov
+//  if (_first_dead > top()) {
+//    _first_dead = top();
+//  }
+//
+//  if (_end_of_live > top()) {
+//    _end_of_live = top();
+//  }
   assert(_first_dead <= top(), "Must be smaller equal");
   assert(_end_of_live <= top(), "Must be smaller equal");
                                                                              
@@ -928,33 +930,29 @@ void CompactibleSpace::compact() {
   } 
 
   /* Copy all live objects to their new location
-  * Used by MarkSweep::mark_sweep_phase4() */
+   * Used by MarkSweep::mark_sweep_phase4() */
   
   HeapWord*       q = bottom();
   HeapWord* const t = _end_of_live; 
   debug_only(HeapWord* prev_q = NULL);    
-  debug_only(HeapWord* prev_prev_q = NULL);  
-  debug_only(HeapWord* prev_compaction_top = NULL);   
-  debug_only(int old_size = 0);                                               
   
   if (q < t && _first_dead > q &&                                                
-    !oop(q)->is_gc_marked()) {          
+      !oop(q)->is_gc_marked()) {
+    debug_only(
     /* we have a chunk of the space which hasn't moved and we've reinitialized  
-    * the mark word during the previous pass, so we can't use is_gc_marked for 
-    * the traversal. */                                                        
+     * the mark word during the previous pass, so we can't use is_gc_marked for 
+     * the traversal. */                                                        
     HeapWord* const end = _first_dead;                                                
 
-#ifdef ASSERT
     while (q < end) {
-      size_t size = oop(q)->size();
+      size_t size = obj_size(q); // FIXME: idubrov oop(q)->size();
       assert(!oop(q)->is_gc_marked(),                                           
-      "should be unmarked (special dense prefix handling)");             
+             "should be unmarked (special dense prefix handling)");             
       VALIDATE_MARK_SWEEP_ONLY(MarkSweep::live_oop_moved_to(q, size, q));     
-      debug_only(prev_prev_q = prev_q);                
       debug_only(prev_q = q);                                                        
       q += size;                                                                
     }  
-#endif
+    )  /* debug_only */
     // (tw) first_dead can be live object!
     q = _first_dead;
 
@@ -971,7 +969,6 @@ void CompactibleSpace::compact() {
   while (q < t) {                                                                
     if (!oop(q)->is_gc_marked()) {                                                
       /* mark is pointer to next marked oop */     
-      debug_only(prev_prev_q = prev_q);                                              
       debug_only(prev_q = q);                                                        
       q = (HeapWord*) oop(q)->mark()->decode_pointer();                                
       assert(q > prev_q, "we should be moving forward through memory");                
@@ -983,11 +980,9 @@ void CompactibleSpace::compact() {
       size_t size = obj_size(q);                                                
       HeapWord* compaction_top = (HeapWord*)oop(q)->forwardee(); 
 
-      size_t original_size = size;
-
       if (must_rescue(oop(q), oop(q)->forwardee())) {
         oop dest_obj = rescue(oop(q));
-        debug_only(Copy::fill_to_words(q, original_size, 0));
+        debug_only(Copy::fill_to_words(q, size, 0));
       } else {
 
         /* prefetch beyond compaction_top */                                        
@@ -995,7 +990,7 @@ void CompactibleSpace::compact() {
         
         /* copy object and reinit its mark */                                        
         VALIDATE_MARK_SWEEP_ONLY(MarkSweep::live_oop_moved_to(q, size,            
-        compaction_top));   
+                                                              compaction_top));   
         assert(q != compaction_top || oop(q)->blueprint()->new_version() != NULL, "everything in this pass should be moving");        
         
         if (oop(q)->blueprint()->new_version() != NULL) {
@@ -1007,27 +1002,25 @@ void CompactibleSpace::compact() {
         assert(oop(compaction_top)->klass() != NULL, "should have a class");
       }
 
-      debug_only(prev_compaction_top = compaction_top);      
-      debug_only(prev_prev_q = prev_q);           
       debug_only(prev_q = q);               
-      debug_only(old_size = (int)size);                                                      
-      q += original_size;                                                                
+      q += size;                                                                
     }                                                                                
   }                        
   
-  /* Reset space after compaction is complete */                                
-  reset_after_compaction();                                                        
-  /* We do this clear, below, since it has overloaded meanings for some */      
-  /* space subtypes.  For example, OffsetTableContigSpace's that were   */      
-  /* compacted into will have had their offset table thresholds updated */      
-  /* continuously, but those that weren't need to have their thresholds */      
-  /* re-initialized.  Also mangles unused area for debugging.           */      
-  if (is_empty()) {                                                             
-    clear(SpaceDecorator::Mangle);                                              
-  } else {                                                                      
-  if (ZapUnusedHeapArea) mangle_unused_area();                                
-  }                                                                             
-
+  /* Let's remember if we were empty before we did the compaction. */
+  bool was_empty = used_region().is_empty();
+  /* Reset space after compaction is complete */
+  reset_after_compaction();
+  /* We do this clear, below, since it has overloaded meanings for some */
+  /* space subtypes.  For example, OffsetTableContigSpace's that were   */
+  /* compacted into will have had their offset table thresholds updated */
+  /* continuously, but those that weren't need to have their thresholds */
+  /* re-initialized.  Also mangles unused area for debugging.           */
+  if (used_region().is_empty()) {
+    if (!was_empty) clear(SpaceDecorator::Mangle);
+  } else {
+    if (ZapUnusedHeapArea) mangle_unused_area();
+  }
 
   //SCAN_AND_COMPACT(obj_size);
 }

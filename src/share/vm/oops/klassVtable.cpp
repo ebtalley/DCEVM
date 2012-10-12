@@ -629,13 +629,17 @@ void klassVtable::adjust_method_entries(methodOop* old_methods, methodOop* new_m
       if (unchecked_method_at(index) == old_method) {
         put_method_at(new_method, index);
 
-        IF_TRACE_RC4 {
+        if (RC_TRACE_IN_RANGE(0x00100000, 0x00400000)) {
           if (!(*trace_name_printed)) {
-            TRACE_RC4("adjust: name=%s", Klass::cast(old_method->method_holder())->external_name());
+            // RC_TRACE_MESG macro has an embedded ResourceMark
+            RC_TRACE_MESG(("adjust: name=%s",
+                           Klass::cast(old_method->method_holder())->external_name()));
             *trace_name_printed = true;
           }
-          TRACE_RC4("vtable method update: %s(%s)", new_method->name()->as_C_string(),
-            new_method->signature()->as_C_string());
+          // RC_TRACE macro has an embedded ResourceMark
+          RC_TRACE(0x00100000, ("vtable method update: %s(%s)",
+                                new_method->name()->as_C_string(),
+                                new_method->signature()->as_C_string()));
         }
       }
     }
@@ -979,13 +983,17 @@ void klassItable::adjust_method_entries(methodOop* old_methods, methodOop* new_m
       if (ime->method() == old_method) {
         ime->initialize(new_method);
 
-        IF_TRACE_RC4 {
+        if (RC_TRACE_IN_RANGE(0x00100000, 0x00400000)) {
           if (!(*trace_name_printed)) {
-            TRACE_RC4("adjust: name=%s", Klass::cast(old_method->method_holder())->external_name());
+            // RC_TRACE_MESG macro has an embedded ResourceMark
+            RC_TRACE_MESG(("adjust: name=%s",
+              Klass::cast(old_method->method_holder())->external_name()));
             *trace_name_printed = true;
           }
-          TRACE_RC4("itable method update: %s(%s)", new_method->name()->as_C_string(),
-            new_method->signature()->as_C_string());
+          // RC_TRACE macro has an embedded ResourceMark
+          RC_TRACE(0x00200000, ("itable method update: %s(%s)",
+            new_method->name()->as_C_string(),
+            new_method->signature()->as_C_string()));
         }
         break;
       }

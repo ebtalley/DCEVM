@@ -625,13 +625,21 @@ void SharedRuntime::throw_and_post_jvmti_exception(JavaThread *thread, Symbol* n
 //
 JRT_LEAF(int, SharedRuntime::rc_trace_method_entry(
     JavaThread* thread, methodOopDesc* method))
-  assert(TraceRedefineClasses >= 4, "wrong call");
+  assert(RC_TRACE_IN_RANGE(0x00001000, 0x00002000), "wrong call");
 
   if (method->is_obsolete()) {
     // We are calling an obsolete method, but this is not necessarily
     // an error. Our method could have been redefined just after we
     // fetched the methodOop from the constant pool.
-    TRACE_RC4("calling obsolete method '%s'", method->name_and_sig_as_C_string());
+
+    // RC_TRACE macro has an embedded ResourceMark
+    RC_TRACE_WITH_THREAD(0x00001000, thread,
+                         ("calling obsolete method '%s'",
+                          method->name_and_sig_as_C_string()));
+    if (RC_TRACE_ENABLED(0x00002000)) {
+      // this option is provided to debug calls to obsolete methods
+      guarantee(false, "faulting at call to an obsolete method.");
+    }
   }
   return 0;
 JRT_END
@@ -1133,7 +1141,7 @@ methodHandle SharedRuntime::resolve_helper(JavaThread *thread,
     while (!HAS_PENDING_EXCEPTION && callee_method->is_old() &&
            callee_method->method_holder()->klass_part()->newest_version() != SystemDictionary::Object_klass()->klass_part()->newest_version()) {
 
-      // (tw) If we are executing an old method, this is OK!
+      // DCEVM: If we are executing an old method, this is OK!
       {
         ResourceMark rm(thread);
         RegisterMap cbl_map(thread, false);
