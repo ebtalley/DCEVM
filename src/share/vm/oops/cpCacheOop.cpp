@@ -36,9 +36,15 @@
 
 // Implememtation of ConstantPoolCacheEntry
 
+void ConstantPoolCacheEntry::copy_from(ConstantPoolCacheEntry *other) {
+  _flags = other->_flags;    // flags
+}
+
 void ConstantPoolCacheEntry::initialize_entry(int index) {
   assert(0 < index && index < 0x10000, "sanity check");
   _indices = index;
+  _f1 = NULL;
+  _f2 = 0;
   assert(constant_pool_index() == index, "");
 }
 
@@ -50,7 +56,7 @@ void ConstantPoolCacheEntry::initialize_secondary_entry(int main_index) {
 
 int ConstantPoolCacheEntry::as_flags(TosState state, bool is_final,
                     bool is_vfinal, bool is_volatile,
-                    bool is_method_interface, bool is_method) {
+                    bool is_method_interface, bool is_method, bool is_old_method) {
   int f = state;
 
   assert( state < number_of_states, "Invalid state in as_flags");
@@ -65,7 +71,9 @@ int ConstantPoolCacheEntry::as_flags(TosState state, bool is_final,
   if (is_method_interface) f |= 1;
   f <<= 1;
   if (is_method) f |= 1;
-  f <<= ConstantPoolCacheEntry::hotSwapBit;
+  f <<= 1;
+  if (is_old_method) f |= 1;
+  f <<= ConstantPoolCacheEntry::oldMethodBit;
   // Preserve existing flag bit values
 #ifdef ASSERT
   int old_state = ((_flags >> tosBits) & 0x0F);
@@ -137,7 +145,7 @@ void ConstantPoolCacheEntry::set_field(Bytecodes::Code get_code,
   set_f2(field_offset);
   assert(field_index <= field_index_mask,
          "field index does not fit in low flag bits");
-  set_flags(as_flags(field_type, is_final, false, is_volatile, false, false) |
+  set_flags(as_flags(field_type, is_final, false, is_volatile, false, false, false) |
             (field_index & field_index_mask));
   set_bytecode_1(get_code);
   set_bytecode_2(put_code);
@@ -153,7 +161,8 @@ void ConstantPoolCacheEntry::set_method(Bytecodes::Code invoke_code,
                                         int vtable_index) {
   assert(!is_secondary_entry(), "");
   assert(method->interpreter_entry() != NULL, "should have been set at this point");
-  assert(!method->is_obsolete(),  "attempt to write obsolete method to cpCache");
+  // (tw) No longer valid assert
+  //assert(!method->is_obsolete(),  "attempt to write obsolete method to cpCache");
   bool change_to_virtual = (invoke_code == Bytecodes::_invokeinterface);
 
   int byte_no = -1;
@@ -167,6 +176,9 @@ void ConstantPoolCacheEntry::set_method(Bytecodes::Code invoke_code,
         } else {
           assert(vtable_index >= 0, "valid index");
           set_f2(vtable_index);
+
+          // (tw) save method holder in f1 for virtual calls
+          set_f1(method());
         }
         byte_no = 2;
         break;
@@ -212,7 +224,7 @@ void ConstantPoolCacheEntry::set_method(Bytecodes::Code invoke_code,
                      needs_vfinal_flag,
                      false,
                      change_to_virtual,
-                     true)|
+                     true, method->is_old())|
             method()->size_of_parameters());
 
   // Note:  byte_no also appears in TemplateTable::resolve.
@@ -252,7 +264,7 @@ void ConstantPoolCacheEntry::set_interface_call(methodHandle method, int index) 
   assert(instanceKlass::cast(interf)->is_interface(), "must be an interface");
   set_f1(interf);
   set_f2(index);
-  set_flags(as_flags(as_TosState(method->result_type()), method->is_final_method(), false, false, false, true) | method()->size_of_parameters());
+  set_flags(as_flags(as_TosState(method->result_type()), method->is_final_method(), false, false, false, true, method->is_old()) | method()->size_of_parameters());
   set_bytecode_1(Bytecodes::_invokeinterface);
 }
 
@@ -282,7 +294,7 @@ void ConstantPoolCacheEntry::set_dynamic_call(Handle call_site, methodHandle sig
   param_size -= 1;  // do not count MH.this; it is not stacked for invokedynamic
   bool is_final = true;
   assert(signature_invoker->is_final_method(), "is_final");
-  int flags = as_flags(as_TosState(signature_invoker->result_type()), is_final, false, false, false, true) | param_size;
+  int flags = as_flags(as_TosState(signature_invoker->result_type()), is_final, false, false, false, true, false) | param_size;
   assert(_flags == 0 || _flags == flags, "flags should be the same");
   set_flags(flags);
   // do not do set_bytecode on a secondary CP cache entry
@@ -416,26 +428,13 @@ void ConstantPoolCacheEntry::update_pointers() {
 // If this constantPoolCacheEntry refers to old_method then update it
 // to refer to new_method.
 bool ConstantPoolCacheEntry::adjust_method_entry(methodOop old_method,
-       methodOop new_method, bool * trace_name_printed) {
+       methodOop new_method) {
 
   if (is_vfinal()) {
-    // virtual and final so f2() contains method ptr instead of vtable index
-    if (f2() == (intptr_t)old_method) {
-      // match old_method so need an update
-      _f2 = (intptr_t)new_method;
-      if (RC_TRACE_IN_RANGE(0x00100000, 0x00400000)) {
-        if (!(*trace_name_printed)) {
-          // RC_TRACE_MESG macro has an embedded ResourceMark
-          RC_TRACE_MESG(("adjust: name=%s",
-            Klass::cast(old_method->method_holder())->external_name()));
-          *trace_name_printed = true;
-        }
-        // RC_TRACE macro has an embedded ResourceMark
-        RC_TRACE(0x00400000, ("cpc vf-entry update: %s(%s)",
-          new_method->name()->as_C_string(),
-          new_method->signature()->as_C_string()));
-      }
 
+    // virtual and final so f2() contains method ptr instead of vtable index
+    if((methodOop)f2() != NULL && ((methodOop)f2())->method_holder()->klass_part()->new_version()) {
+      initialize_entry(constant_pool_index());
       return true;
     }
 
@@ -443,63 +442,26 @@ bool ConstantPoolCacheEntry::adjust_method_entry(methodOop old_method,
     return false;
   }
 
-  if ((oop)_f1 == NULL) {
-    // NULL f1() means this is a virtual entry so bail out
-    // We are assuming that the vtable index does not need change.
+  // (tw) check how to update interface methods!
+  if (bytecode_1() == Bytecodes::_invokevirtual || bytecode_2() == Bytecodes::_invokevirtual) {
+      
+    if(((methodOop)f1())->method_holder()->klass_part()->new_version()) {
+      initialize_entry(constant_pool_index());
+      return true;
+    }
+
     return false;
   }
 
   if ((oop)_f1 == old_method) {
     _f1 = new_method;
-    if (RC_TRACE_IN_RANGE(0x00100000, 0x00400000)) {
-      if (!(*trace_name_printed)) {
-        // RC_TRACE_MESG macro has an embedded ResourceMark
-        RC_TRACE_MESG(("adjust: name=%s",
-          Klass::cast(old_method->method_holder())->external_name()));
-        *trace_name_printed = true;
-      }
-      // RC_TRACE macro has an embedded ResourceMark
-      RC_TRACE(0x00400000, ("cpc entry update: %s(%s)",
-        new_method->name()->as_C_string(),
-        new_method->signature()->as_C_string()));
-    }
-
+    return true;
+  } else if(_f1 != NULL && (bytecode_1() != Bytecodes::_invokeinterface && ((methodOop)f1())->method_holder()->klass_part()->new_version())) {
+    initialize_entry(constant_pool_index());
     return true;
   }
 
   return false;
-}
-
-bool ConstantPoolCacheEntry::is_interesting_method_entry(klassOop k) {
-  if (!is_method_entry()) {
-    // not a method entry so not interesting by default
-    return false;
-  }
-
-  methodOop m = NULL;
-  if (is_vfinal()) {
-    // virtual and final so _f2 contains method ptr instead of vtable index
-    m = (methodOop)_f2;
-  } else if ((oop)_f1 == NULL) {
-    // NULL _f1 means this is a virtual entry so also not interesting
-    return false;
-  } else {
-    if (!((oop)_f1)->is_method()) {
-      // _f1 can also contain a klassOop for an interface
-      return false;
-    }
-    m = (methodOop)_f1;
-  }
-
-  assert(m != NULL && m->is_method(), "sanity check");
-  if (m == NULL || !m->is_method() || m->method_holder() != k) {
-    // robustness for above sanity checks or method is not in
-    // the interesting class
-    return false;
-  }
-
-  // the method is in the interesting class so the entry is interesting
-  return true;
 }
 
 void ConstantPoolCacheEntry::print(outputStream* st, int index) const {
@@ -542,38 +504,18 @@ void constantPoolCacheOopDesc::initialize(intArray& inverse_index_map) {
 // RedefineClasses() API support:
 // If any entry of this constantPoolCache points to any of
 // old_methods, replace it with the corresponding new_method.
-void constantPoolCacheOopDesc::adjust_method_entries(methodOop* old_methods, methodOop* new_methods,
-                                                     int methods_length, bool * trace_name_printed) {
-
-  if (methods_length == 0) {
-    // nothing to do if there are no methods
-    return;
-  }
-
-  // get shorthand for the interesting class
-  klassOop old_holder = old_methods[0]->method_holder();
+void constantPoolCacheOopDesc::adjust_entries(methodOop* old_methods, methodOop* new_methods,
+                                                     int methods_length) {
 
   for (int i = 0; i < length(); i++) {
-    if (!entry_at(i)->is_interesting_method_entry(old_holder)) {
-      // skip uninteresting methods
-      continue;
-    }
+     if (entry_at(i)->is_field_entry()) {
 
-    // The constantPoolCache contains entries for several different
-    // things, but we only care about methods. In fact, we only care
-    // about methods in the same class as the one that contains the
-    // old_methods. At this point, we have an interesting entry.
-
-    for (int j = 0; j < methods_length; j++) {
-      methodOop old_method = old_methods[j];
-      methodOop new_method = new_methods[j];
-
-      if (entry_at(i)->adjust_method_entry(old_method, new_method,
-          trace_name_printed)) {
-        // current old_method matched this entry and we updated it so
-        // break out and get to the next interesting entry if there one
-        break;
-      }
+       // (tw) TODO: Update only field offsets and modify only constant pool entries that
+       // point to changed fields
+       entry_at(i)->initialize_entry(entry_at(i)->constant_pool_index());
+     
+     } else if(entry_at(i)->is_method_entry()) {
+       entry_at(i)->adjust_method_entry(NULL, NULL);
     }
   }
 }

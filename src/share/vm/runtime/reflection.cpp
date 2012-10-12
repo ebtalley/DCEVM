@@ -469,7 +469,8 @@ bool Reflection::verify_class_access(klassOop current_class, klassOop new_class,
   // sun/reflect/MagicAccessorImpl subclasses to succeed trivially.
   if (   JDK_Version::is_gte_jdk14x_version()
       && UseNewReflection
-      && Klass::cast(current_class)->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
+      && (Klass::cast(current_class)->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass()) ||
+      Klass::cast(current_class)->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass()->klass_part()->newest_version()))) {
     return true;
   }
 
@@ -525,6 +526,12 @@ bool Reflection::verify_field_access(klassOop current_class,
                                      AccessFlags access,
                                      bool classloader_only,
                                      bool protected_restriction) {
+
+  // (tw) Decide accessibility based on active version
+  if (current_class != NULL) {
+    current_class = current_class->klass_part()->active_version();
+  }
+  
   // Verify that current_class can access a field of field_class, where that
   // field's access bits are "access".  We assume that we've already verified
   // that current_class can access field_class.
@@ -566,7 +573,8 @@ bool Reflection::verify_field_access(klassOop current_class,
   // sun/reflect/MagicAccessorImpl subclasses to succeed trivially.
   if (   JDK_Version::is_gte_jdk14x_version()
       && UseNewReflection
-      && Klass::cast(current_class)->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
+      && (Klass::cast(current_class)->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass()) ||
+      Klass::cast(current_class)->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass()->klass_part()->newest_version()))) {
     return true;
   }
 

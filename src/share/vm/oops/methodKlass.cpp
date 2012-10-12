@@ -93,6 +93,10 @@ methodOop methodKlass::allocate(constMethodHandle xconst,
   m->set_adapter_entry(NULL);
   m->clear_code(); // from_c/from_i get set to c2i/i2i
 
+  m->set_forward_method(NULL);
+  m->set_new_version(NULL);
+  m->set_old_version(NULL);
+
   if (access_flags.is_native()) {
     m->clear_native_function();
     m->set_signature_handler(NULL);
@@ -127,6 +131,9 @@ void methodKlass::oop_follow_contents(oop obj) {
   // Performance tweak: We skip iterating over the klass pointer since we
   // know that Universe::methodKlassObj never moves.
   MarkSweep::mark_and_push(m->adr_constMethod());
+  MarkSweep::mark_and_push(m->adr_forward_method());
+  MarkSweep::mark_and_push(m->adr_new_version());
+  MarkSweep::mark_and_push(m->adr_old_version());
   MarkSweep::mark_and_push(m->adr_constants());
   if (m->method_data() != NULL) {
     MarkSweep::mark_and_push(m->adr_method_data());
@@ -141,6 +148,9 @@ void methodKlass::oop_follow_contents(ParCompactionManager* cm,
   // Performance tweak: We skip iterating over the klass pointer since we
   // know that Universe::methodKlassObj never moves.
   PSParallelCompact::mark_and_push(cm, m->adr_constMethod());
+  PSParallelCompact::mark_and_push(cm, m->adr_forward_method());
+  PSParallelCompact::mark_and_push(cm, m->adr_new_version());
+  PSParallelCompact::mark_and_push(cm, m->adr_old_version());
   PSParallelCompact::mark_and_push(cm, m->adr_constants());
 #ifdef COMPILER2
   if (m->method_data() != NULL) {
@@ -159,6 +169,9 @@ int methodKlass::oop_oop_iterate(oop obj, OopClosure* blk) {
   // Performance tweak: We skip iterating over the klass pointer since we
   // know that Universe::methodKlassObj never moves
   blk->do_oop(m->adr_constMethod());
+  blk->do_oop(m->adr_forward_method());
+  blk->do_oop(m->adr_new_version());
+  blk->do_oop(m->adr_old_version());
   blk->do_oop(m->adr_constants());
   if (m->method_data() != NULL) {
     blk->do_oop(m->adr_method_data());
@@ -177,6 +190,12 @@ int methodKlass::oop_oop_iterate_m(oop obj, OopClosure* blk, MemRegion mr) {
   // know that Universe::methodKlassObj never moves.
   oop* adr;
   adr = m->adr_constMethod();
+  if (mr.contains(adr)) blk->do_oop(adr);
+  adr = m->adr_new_version();
+  if (mr.contains(adr)) blk->do_oop(adr);
+  adr = m->adr_forward_method();
+  if (mr.contains(adr)) blk->do_oop(adr);
+  adr = m->adr_old_version();
   if (mr.contains(adr)) blk->do_oop(adr);
   adr = m->adr_constants();
   if (mr.contains(adr)) blk->do_oop(adr);
@@ -197,6 +216,9 @@ int methodKlass::oop_adjust_pointers(oop obj) {
   // Performance tweak: We skip iterating over the klass pointer since we
   // know that Universe::methodKlassObj never moves.
   MarkSweep::adjust_pointer(m->adr_constMethod());
+  MarkSweep::adjust_pointer(m->adr_forward_method());
+  MarkSweep::adjust_pointer(m->adr_new_version());
+  MarkSweep::adjust_pointer(m->adr_old_version());
   MarkSweep::adjust_pointer(m->adr_constants());
   if (m->method_data() != NULL) {
     MarkSweep::adjust_pointer(m->adr_method_data());
@@ -213,6 +235,8 @@ int methodKlass::oop_update_pointers(ParCompactionManager* cm, oop obj) {
   assert(obj->is_method(), "should be method");
   methodOop m = methodOop(obj);
   PSParallelCompact::adjust_pointer(m->adr_constMethod());
+  PSParallelCompact::adjust_pointer(m->adr_new_version());
+  PSParallelCompact::adjust_pointer(m->adr_old_version());
   PSParallelCompact::adjust_pointer(m->adr_constants());
 #ifdef COMPILER2
   if (m->method_data() != NULL) {
@@ -234,7 +258,18 @@ void methodKlass::oop_print_on(oop obj, outputStream* st) {
   methodOop m = methodOop(obj);
   // get the effect of PrintOopAddress, always, for methods:
   st->print_cr(" - this oop:          "INTPTR_FORMAT, (intptr_t)m);
-  st->print   (" - method holder:     ");    m->method_holder()->print_value_on(st); st->cr();
+  st->print   (" - method holder:     ");    m->method_holder()->print_value_on(st);
+
+  if (m->method_holder()->klass_part()->new_version() != NULL) {
+    st->print(" (old)");
+  }
+  st->cr();
+
+  st->print_cr(" - is obsolete:       %d",   (int)(m->is_obsolete()));
+  st->print_cr(" - is old:            %d",   (int)(m->is_old()));
+  st->print_cr(" - new version:       %d",   (int)(m->new_version()));
+  st->print_cr(" - old version:       %d",   (int)(m->old_version()));
+  st->print_cr(" - holder revision:   %d", m->method_holder()->klass_part()->revision_number());
   st->print   (" - constants:         "INTPTR_FORMAT" ", (address)m->constants());
   m->constants()->print_value_on(st); st->cr();
   st->print   (" - access:            0x%x  ", m->access_flags().as_int()); m->access_flags().print_on(st); st->cr();

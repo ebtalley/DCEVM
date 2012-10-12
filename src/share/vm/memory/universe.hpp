@@ -127,6 +127,8 @@ class Universe: AllStatic {
   friend class SystemDictionary;
   friend class VMStructs;
   friend class CompactingPermGenGen;
+  friend class Space;
+  friend class ContiguousSpace;
   friend class VM_PopulateDumpSharedSpace;
 
   friend jint  universe_init();
@@ -257,7 +259,18 @@ class Universe: AllStatic {
 
   static void compute_verify_oop_data();
 
+  static bool _is_redefining_gc_run;
+
  public:
+
+   static bool is_redefining_gc_run() {
+     return _is_redefining_gc_run;
+   }
+
+   static void set_redefining_gc_run(bool b) {
+     _is_redefining_gc_run = b;
+   }
+
   // Known classes in the VM
   static klassOop boolArrayKlassObj()                 { return _boolArrayKlassObj;   }
   static klassOop byteArrayKlassObj()                 { return _byteArrayKlassObj;   }
@@ -396,6 +409,8 @@ class Universe: AllStatic {
 
   // Iteration
 
+  static void root_oops_do(OopClosure *f);
+
   // Apply "f" to the addresses of all the direct heap pointers maintained
   // as static fields of "Universe".
   static void oops_do(OopClosure* f, bool do_all = false);
@@ -412,6 +427,7 @@ class Universe: AllStatic {
 
   // Debugging
   static bool verify_in_progress() { return _verify_in_progress; }
+  static void set_verify_in_progress(bool b) { _verify_in_progress = b; }
   static void verify(bool allow_dirty = true, bool silent = false,
                      VerifyOption option = VerifyOption_Default );
   static int  verify_count()       { return _verify_count; }

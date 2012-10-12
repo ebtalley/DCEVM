@@ -42,10 +42,9 @@ bool MethodComparator::methods_EMCP(methodOop old_method, methodOop new_method) 
   if (old_method->code_size() != new_method->code_size())
     return false;
   if (check_stack_and_locals_size(old_method, new_method) != 0) {
-    // RC_TRACE macro has an embedded ResourceMark
-    RC_TRACE(0x00800000, ("Methods %s non-comparable with diagnosis %d",
+    TRACE_RC4("Methods %s non-comparable with diagnosis %d",
       old_method->name()->as_C_string(),
-      check_stack_and_locals_size(old_method, new_method)));
+      check_stack_and_locals_size(old_method, new_method));
     return false;
   }
 
@@ -65,6 +64,37 @@ bool MethodComparator::methods_EMCP(methodOop old_method, methodOop new_method) 
     if (! args_same(c_old, c_new))
       return false;
   }
+
+  // (tw) Added exception table comparison to EMCP comparison
+
+  typeArrayOop ex_old = old_method->constMethod()->exception_table();
+  typeArrayOop ex_new = new_method->constMethod()->exception_table();
+
+  if (ex_old == NULL && ex_new != NULL) return false;
+  if (ex_old != NULL && ex_new == NULL) return false;
+
+  if (ex_old != NULL && ex_new != NULL && ex_old->length() == ex_new->length()) {
+    // Per entry:
+    /* start    */     
+    /* limit    */      
+    /* goto pc  */     
+    /* cp index */
+    for (int i=0; i<ex_old->length(); i++) {
+      int old_val = ex_old->int_at(i);
+      int new_val = ex_new->int_at(i);
+      if ((i + 1) % 4 == 0) {
+        if (old_val == 0 || new_val == 0) {
+          if (old_val != new_val) return false;
+        } else if ((_old_cp->klass_at_noresolve(old_val) != _new_cp->klass_at_noresolve(new_val)))
+          return false;
+      } else {
+        if (old_val != new_val) {
+          return false;
+        }
+      }
+    }
+  }
+
   return true;
 }
 
@@ -114,10 +144,9 @@ bool MethodComparator::methods_switchable(methodOop old_method, methodOop new_me
   // Now we can test all forward jumps
   for (int i = 0; i < fwd_jmps.length() / 2; i++) {
     if (! bci_map.old_and_new_locations_same(fwd_jmps.at(i*2), fwd_jmps.at(i*2+1))) {
-      RC_TRACE(0x00800000,
-        ("Fwd jump miss: old dest = %d, calc new dest = %d, act new dest = %d",
+      TRACE_RC4("Fwd jump miss: old dest = %d, calc new dest = %d, act new dest = %d",
         fwd_jmps.at(i*2), bci_map.new_bci_for_old(fwd_jmps.at(i*2)),
-        fwd_jmps.at(i*2+1)));
+        fwd_jmps.at(i*2+1));
       return false;
     }
   }

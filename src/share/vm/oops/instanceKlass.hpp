@@ -99,6 +99,22 @@ public:
   virtual void do_field(fieldDescriptor* fd) = 0;
 };
 
+// (tw) Iterates over the fields of the old and new class
+class FieldEvolutionClosure : public StackObj {
+public:
+  virtual void do_new_field(fieldDescriptor* fd) = 0;
+  virtual void do_old_field(fieldDescriptor* fd) = 0;
+  virtual void do_changed_field(fieldDescriptor* old_fd, fieldDescriptor *new_fd) = 0;
+};
+
+// (tw) Iterates over the methods of the old and new class
+class MethodEvolutionClosure : public StackObj {
+public:
+  virtual void do_new_method(methodOop oop) = 0;
+  virtual void do_old_method(methodOop oop) = 0;
+  virtual void do_changed_method(methodOop oldOop, methodOop newOop) = 0;
+};
+
 #ifndef PRODUCT
 // Print fields.
 // If "obj" argument to constructor is NULL, prints static fields, otherwise prints non-static fields.
@@ -264,6 +280,11 @@ class instanceKlass: public Klass {
   // _idnum_allocated_count.
   u1              _init_state;                    // state of class
 
+  // (tw) Field that allows for a short-path when calculating updated fields for the second time and
+  // no fields changed. Testing performance impact with this, can be removed later when the update
+  // information is cached.
+  bool            _fields_not_changed;
+
   u1              _reference_type;                // reference type
 
   // embedded Java vtable follows here
@@ -397,6 +418,7 @@ class instanceKlass: public Klass {
   // initialization (virtuals from Klass)
   bool should_be_initialized() const;  // means that initialize should be called
   void initialize(TRAPS);
+  void initialize_redefined_class();
   void link_class(TRAPS);
   bool link_class_or_fail(TRAPS); // returns false on failure
   void unlink_class();
@@ -549,6 +571,7 @@ class instanceKlass: public Klass {
   static void get_jmethod_id_length_value(jmethodID* cache, size_t idnum,
                 size_t *length_p, jmethodID* id_p);
   jmethodID jmethod_id_or_null(methodOop method);
+  bool update_jmethod_id(methodOop method, jmethodID newMethodID);
 
   // cached itable index support
   void set_cached_itable_index(size_t idnum, int index);
@@ -630,6 +653,7 @@ class instanceKlass: public Klass {
 
   // subclass/subinterface checks
   bool implements_interface(klassOop k) const;
+  bool implements_interface_any_version(klassOop k) const;
 
   // Access to implementors of an interface. We only store the count
   // of implementors, and in case, there are only a few
@@ -659,6 +683,12 @@ class instanceKlass: public Klass {
   void do_local_static_fields(FieldClosure* cl);
   void do_nonstatic_fields(FieldClosure* cl); // including inherited fields
   void do_local_static_fields(void f(fieldDescriptor*, TRAPS), TRAPS);
+  void do_fields_evolution(FieldEvolutionClosure *cl);
+  void store_update_information(GrowableArray<int> &values);
+  void clear_update_information();
+  void store_type_check_information(GrowableArray< Pair<int, klassOop> > &values);
+  void clear_type_check_information();
+
 
   void methods_do(void f(methodOop method));
   void array_klasses_do(void f(klassOop k));

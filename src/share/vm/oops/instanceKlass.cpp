@@ -248,12 +248,117 @@ void instanceKlass::initialize(TRAPS) {
 }
 
 
+void instanceKlass::initialize_redefined_class() {
+
+  TRACE_RC3("initializing redefined class %s", name()->as_C_string());
+  
+  assert(!is_initialized(), "");
+  assert(this->old_version() != NULL, "");
+  assert(is_linked(), "must be linked before");
+
+
+  instanceKlassHandle this_oop(Thread::current(), this->as_klassOop());
+  class UpdateStaticFieldClosure : public FieldClosure {
+
+  private:
+    instanceKlassHandle this_oop;
+
+  public:
+    UpdateStaticFieldClosure(instanceKlassHandle this_oop) {
+      this->this_oop = this_oop;
+    }
+
+    virtual void do_field(fieldDescriptor* fd) {
+      fieldDescriptor result;
+      bool found = ((instanceKlass *)(this_oop->old_version()->klass_part()))->find_local_field(fd->name(), fd->signature(), &result);
+    
+      if (found && result.is_static()) {
+        int old_offset = result.offset();
+        assert(result.field_type() == fd->field_type(), "");
+
+        oop new_location = this_oop();
+        oop old_location = this_oop->old_version();
+        int offset = fd->offset();
+        TRACE_RC3("Copying static field value for field %s old_offset=%d new_offset=%d", fd->name()->as_C_string(), old_offset, offset);
+
+        oop cur_oop;
+
+        switch(result.field_type()) {
+
+          // Found static field with same name and type in the old klass => copy value from old to new klass
+        
+          case T_BOOLEAN:
+            new_location->bool_field_put(offset, old_location->bool_field(old_offset));
+            DEBUG_ONLY(old_location->byte_field_put(old_offset, 0));
+            break;
+
+          case T_CHAR:
+            new_location->char_field_put(offset, old_location->char_field(old_offset));
+            DEBUG_ONLY(old_location->char_field_put(old_offset, 0));
+            break;
+
+          case T_FLOAT:
+            new_location->float_field_put(offset, old_location->float_field(old_offset));
+            DEBUG_ONLY(old_location->float_field_put(old_offset, 0));
+            break;
+
+          case T_DOUBLE:
+            new_location->double_field_put(offset, old_location->double_field(old_offset));
+            DEBUG_ONLY(old_location->double_field_put(old_offset, 0));
+            break;
+
+          case T_BYTE:
+            new_location->byte_field_put(offset, old_location->byte_field(old_offset));
+            DEBUG_ONLY(old_location->byte_field_put(old_offset, 0));
+            break;
+
+          case T_SHORT:
+            new_location->short_field_put(offset, old_location->short_field(old_offset));
+            DEBUG_ONLY(old_location->short_field_put(old_offset, 0));
+            break;
+
+          case T_INT:
+            new_location->int_field_put(offset, old_location->int_field(old_offset));
+            DEBUG_ONLY(old_location->int_field_put(old_offset, 0));
+            break;
+
+          case T_LONG:
+            new_location->long_field_put(offset, old_location->long_field(old_offset));
+            DEBUG_ONLY(old_location->long_field_put(old_offset, 0));
+            break;
+
+          case T_OBJECT:
+          case T_ARRAY:
+            cur_oop = old_location->obj_field(old_offset);
+            new_location->obj_field_put_raw(offset, cur_oop);
+            old_location->obj_field_put_raw(old_offset, NULL);
+            break;
+
+          default:
+            ShouldNotReachHere();
+        }
+      } else {
+
+        TRACE_RC2("New static field %s has_initial_value=%d", fd->name()->as_C_string(), (int)(fd->has_initial_value()));
+        // field not found
+        // (tw) TODO: Probably this call is not necessary here!
+        // FIXME: idubrov
+        //ClassFileParser::initialize_static_field(fd, Thread::current());
+      }
+    }
+  };
+
+  UpdateStaticFieldClosure cl(this_oop);
+  this->do_local_static_fields(&cl);
+}
+
+
 bool instanceKlass::verify_code(
     instanceKlassHandle this_oop, bool throw_verifyerror, TRAPS) {
   // 1) Verify the bytecodes
   Verifier::Mode mode =
     throw_verifyerror ? Verifier::ThrowException : Verifier::NoException;
-  return Verifier::verify(this_oop, mode, this_oop->should_verify_class(), CHECK_false);
+  return Verifier::verify(this_oop, mode, this_oop->should_verify_class(), true, CHECK_false);
 }
 
 
@@ -360,7 +465,13 @@ bool instanceKlass::link_class_impl(
                                    jt->get_thread_stat()->perf_recursion_counts_addr(),
                                    jt->get_thread_stat()->perf_timers_addr(),
                                    PerfClassTraceTime::CLASS_VERIFY);
-          bool verify_ok = verify_code(this_oop, throw_verifyerror, THREAD);
+          if (this_oop->is_redefining()) {
+            Thread::current()->set_pretend_new_universe(true);
+          }
+          bool verify_ok  = verify_code(this_oop, throw_verifyerror, THREAD);
+          if (this_oop->is_redefining()) {
+            Thread::current()->set_pretend_new_universe(false);
+          }
           if (!verify_ok) {
             return false;
           }
@@ -398,7 +509,8 @@ bool instanceKlass::link_class_impl(
       }
 #endif
       this_oop->set_init_state(linked);
-      if (JvmtiExport::should_post_class_prepare()) {
+      // (tw) Must check for old version in order to prevent infinite loops.
+      if (JvmtiExport::should_post_class_prepare() && this_oop->old_version() == NULL /* JVMTI deadlock otherwise */) {
         Thread *thread = THREAD;
         assert(thread->is_Java_thread(), "thread->is_Java_thread()");
         JvmtiExport::post_class_prepare((JavaThread *) thread, this_oop());
@@ -665,6 +777,18 @@ bool instanceKlass::implements_interface(klassOop k) const {
   return false;
 }
 
+bool instanceKlass::implements_interface_any_version(klassOop k) const {
+  k = k->klass_part()->newest_version();
+  if (this->newest_version() == k) return true;
+  assert(Klass::cast(k)->is_interface(), "should be an interface class");
+  for (int i = 0; i < transitive_interfaces()->length(); i++) {
+    if (((klassOop)transitive_interfaces()->obj_at(i))->klass_part()->newest_version() == k) {
+      return true;
+    }
+  }
+  return false;
+}
+
 objArrayOop instanceKlass::allocate_objArray(int n, int length, TRAPS) {
   if (length < 0) THROW_0(vmSymbols::java_lang_NegativeArraySizeException());
   if (length > arrayOopDesc::max_array_length(T_OBJECT)) {
@@ -793,7 +917,25 @@ methodOop instanceKlass::class_initializer() {
 }
 
 void instanceKlass::call_class_initializer_impl(instanceKlassHandle this_oop, TRAPS) {
+
+  ResourceMark rm(THREAD);
   methodHandle h_method(THREAD, this_oop->class_initializer());
+
+  if (this_oop->revision_number() != -1){
+    methodOop m = NULL;
+    if (AllowAdvancedClassRedefinition) {
+      m = this_oop->find_method(vmSymbols::static_transformer_name(), vmSymbols::void_method_signature());
+    }
+    methodHandle method(m);
+    if (method() != NULL && method()->is_static()) {
+      TRACE_RC2("Calling static transformer instead of static initializer");
+      h_method = method;
+    } else if (!((instanceKlass*)this_oop->old_version()->klass_part())->is_not_initialized()) {
+      // Only execute the static initializer, if it was not yet executed for the old version of the class.
+      return;
+    }
+  }
+
   assert(!this_oop->is_initialized(), "we cannot initialize twice");
   if (TraceClassInitialization) {
     tty->print("%d Initializing ", call_class_initializer_impl_counter++);
@@ -942,6 +1084,152 @@ void instanceKlass::methods_do(void f(methodOop method)) {
   }
 }
 
+void instanceKlass::store_update_information(GrowableArray<int> &values) {
+  int *arr = NEW_C_HEAP_ARRAY(int, values.length());
+  for (int i=0; i<values.length(); i++) {
+    arr[i] = values.at(i);
+  }
+  set_update_information(arr);
+}
+
+void instanceKlass::clear_update_information() {
+  FREE_C_HEAP_ARRAY(int, update_information());
+  set_update_information(NULL);
+}
+
+typedef Pair<int, klassOop> typeInfoPair;
+
+void instanceKlass::store_type_check_information(GrowableArray< Pair<int, klassOop> > &values) {
+  Pair<int, klassOop> *arr = NEW_C_HEAP_ARRAY(typeInfoPair, values.length());
+  for (int i=0; i<values.length(); i++) {
+    arr[i] = values.at(i);
+  }
+  set_type_check_information(arr);
+}
+
+void instanceKlass::clear_type_check_information() {
+  FREE_C_HEAP_ARRAY(typeInfoPair, type_check_information());
+  set_type_check_information(NULL);
+}
+
+void instanceKlass::do_fields_evolution(FieldEvolutionClosure* cl) {
+
+  assert (old_version() != NULL, "must have old version!");
+
+  klassOop old_klass_oop = old_version();
+  instanceKlass *old_klass = instanceKlass::cast(old_klass_oop);
+  instanceKlass *new_klass = this;
+
+  fieldDescriptor fd;
+  fieldDescriptor old_fd;
+
+  instanceKlass *cur_new_klass = new_klass;
+  klassOop cur_new_klass_oop = this->as_klassOop();
+
+  if (_fields_not_changed) {
+
+    class MyFieldClosure : public FieldClosure {
+
+      FieldEvolutionClosure *_cl;
+    public:
+      MyFieldClosure(FieldEvolutionClosure *cl) {_cl = cl; }
+      virtual void do_field(fieldDescriptor* fd) {
+        _cl->do_changed_field(fd, fd);
+      }
+    };
+
+    MyFieldClosure mfc(cl);
+    do_nonstatic_fields(&mfc);
+  } else {
+
+    _fields_not_changed = true;
+
+
+    GrowableArray<fieldDescriptor> fds;
+
+
+    while (true) {
+
+      for (JavaFieldStream fs(cur_new_klass); !fs.done(); fs.next()) {
+
+        fd.initialize(cur_new_klass_oop, fs.index());
+
+        if (fd.is_static()) {
+          continue;
+        }
+
+        fds.append(fd);
+      }
+
+      if (cur_new_klass->super() != NULL) {
+        cur_new_klass_oop = cur_new_klass->super();
+        cur_new_klass = instanceKlass::cast(cur_new_klass_oop);
+      } else {
+        break;
+      }
+    }
+
+    GrowableArray<fieldDescriptor> sortedFds;
+
+    while (fds.length() > 0) {
+
+      int minOffset = 0x7fffffff;
+      int minIndex = -1;
+      for (int i=0; i<fds.length(); i++) {
+        int curOffset = fds.adr_at(i)->offset();
+        if (curOffset < minOffset) {
+          minOffset = curOffset;
+          minIndex = i;
+        }
+      }
+
+      sortedFds.append(fds.at(minIndex));
+      fds.remove_at(minIndex);
+    }
+
+
+    for (int i=0; i<sortedFds.length(); i++) {
+
+      fieldDescriptor &fd = *sortedFds.adr_at(i);
+
+      char found = 0;
+      instanceKlass *cur_old_klass = old_klass;
+      klassOop cur_old_klass_oop = old_klass_oop;
+      while (true) {
+        for (JavaFieldStream fs(cur_old_klass); !fs.done(); fs.next()) {
+
+          old_fd.initialize(cur_old_klass_oop, fs.index());
+
+          if (old_fd.is_static()) {
+            continue;
+          }
+
+          if (old_fd.name() == fd.name() && old_fd.signature() == fd.signature()) {
+            found = 1;
+            break;
+          }
+        }
+
+        if (!found && cur_old_klass->super()) {
+          cur_old_klass_oop = cur_old_klass->super();
+          cur_old_klass = instanceKlass::cast(cur_old_klass_oop);
+        } else {
+          break;
+        }
+      }
+
+      if (found) {
+        if (old_fd.offset() != fd.offset()) {
+          _fields_not_changed = false;
+        }
+        cl->do_changed_field(&old_fd, &fd);
+      } else {
+        _fields_not_changed = false;
+        cl->do_new_field(&fd);
+      }
+    }
+  }
+}
 
 void instanceKlass::do_local_static_fields(FieldClosure* cl) {
   for (JavaFieldStream fs(this); !fs.done(); fs.next()) {
@@ -1331,6 +1619,20 @@ jmethodID instanceKlass::jmethod_id_or_null(methodOop method) {
   return id;
 }
 
+bool instanceKlass::update_jmethod_id(methodOop method, jmethodID newMethodID) {
+  size_t idnum = (size_t)method->method_idnum();
+  jmethodID* jmeths = methods_jmethod_ids_acquire();
+  size_t length;                                // length assigned as debugging crumb
+  jmethodID id = NULL;
+  if (jmeths != NULL &&                         // If there is a cache
+    (length = (size_t)jmeths[0]) > idnum) {   // and if it is long enough,
+      jmeths[idnum+1] = newMethodID;                       // Set the id (may be NULL)
+      return true;
+  }
+
+  return false;
+}
+
 
 // Cache an itable index
 void instanceKlass::set_cached_itable_index(size_t idnum, int index) {
@@ -1490,6 +1792,13 @@ void instanceKlass::remove_dependent_nmethod(nmethod* nm) {
     last = b;
     b = b->next();
   }
+
+  // (tw) Hack as dependencies get wrong version of klassOop
+  if(this->old_version() != NULL) {
+    ((instanceKlass *)this->old_version()->klass_part())->remove_dependent_nmethod(nm);
+    return;
+  }
+
 #ifdef ASSERT
   tty->print_cr("### %s can't find dependent nmethod:", this->external_name());
   nm->print();
@@ -2337,6 +2646,9 @@ void instanceKlass::oop_print_on(oop obj, outputStream* st) {
     klassOop mirrored_klass = java_lang_Class::as_klassOop(obj);
     st->print(BULLET"fake entry for mirror: ");
     mirrored_klass->print_value_on(st);
+    if (mirrored_klass != NULL) {
+      st->print_cr("revision: %d (oldest=%d, newest=%d)", mirrored_klass->klass_part()->revision_number(), mirrored_klass->klass_part()->oldest_version()->klass_part()->revision_number(), mirrored_klass->klass_part()->newest_version()->klass_part()->revision_number());
+    }
     st->cr();
     st->print(BULLET"fake entry resolved_constructor: ");
     methodOop ctor = java_lang_Class::resolved_constructor(obj);
@@ -2507,9 +2819,8 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
                             GrowableArray<PreviousVersionNode *>(2, true);
   }
 
-  // RC_TRACE macro has an embedded ResourceMark
-  RC_TRACE(0x00000100, ("adding previous version ref for %s @%d, EMCP_cnt=%d",
-    ikh->external_name(), _previous_versions->length(), emcp_method_count));
+  TRACE_RC3("adding previous version ref for %s @%d, EMCP_cnt=%d",
+    ikh->external_name(), _previous_versions->length(), emcp_method_count);
   constantPoolHandle cp_h(ikh->constants());
   jobject cp_ref;
   if (cp_h->is_shared()) {
@@ -2525,8 +2836,7 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
   if (emcp_method_count == 0) {
     // non-shared ConstantPool gets a weak reference
     pv_node = new PreviousVersionNode(cp_ref, !cp_h->is_shared(), NULL);
-    RC_TRACE(0x00000400,
-      ("add: all methods are obsolete; flushing any EMCP weak refs"));
+    TRACE_RC3("add: all methods are obsolete; flushing any EMCP weak refs");
   } else {
     int local_count = 0;
     GrowableArray<jweak>* method_refs = new (ResourceObj::C_HEAP)
@@ -2555,8 +2865,7 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
   // caller is the VMThread and we are at a safepoint, this is a good
   // time to clear out unused weak references.
 
-  RC_TRACE(0x00000400, ("add: previous version length=%d",
-    _previous_versions->length()));
+  TRACE_RC3("add: previous version length=%d", _previous_versions->length());
 
   // skip the last entry since we just added it
   for (int i = _previous_versions->length() - 2; i >= 0; i--) {
@@ -2581,13 +2890,12 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
       // do anything special with the index.
       continue;
     } else {
-      RC_TRACE(0x00000400, ("add: previous version @%d is alive", i));
+      TRACE_RC3("add: previous version @%d is alive", i);
     }
 
     GrowableArray<jweak>* method_refs = pv_node->prev_EMCP_methods();
     if (method_refs != NULL) {
-      RC_TRACE(0x00000400, ("add: previous methods length=%d",
-        method_refs->length()));
+      TRACE_RC3("add: previous methods length=%d", method_refs->length());
       for (int j = method_refs->length() - 1; j >= 0; j--) {
         jweak method_ref = method_refs->at(j);
         assert(method_ref != NULL, "weak method ref was unexpectedly cleared");
@@ -2606,11 +2914,8 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
           JNIHandles::destroy_weak_global(method_ref);
           method_refs->remove_at(j);
         } else {
-          // RC_TRACE macro has an embedded ResourceMark
-          RC_TRACE(0x00000400,
-            ("add: %s(%s): previous method @%d in version @%d is alive",
-            method->name()->as_C_string(), method->signature()->as_C_string(),
-            j, i));
+          TRACE_RC3("add: %s(%s): previous method @%d in version @%d is alive",
+            method->name()->as_C_string(), method->signature()->as_C_string(), j, i);
         }
       }
     }
@@ -2693,9 +2998,8 @@ void instanceKlass::add_previous_version(instanceKlassHandle ikh,
               // The current RedefineClasses() call has made all EMCP
               // versions of this method obsolete so mark it as obsolete
               // and remove the weak ref.
-              RC_TRACE(0x00000400,
-                ("add: %s(%s): flush obsolete method @%d in version @%d",
-                m_name->as_C_string(), m_signature->as_C_string(), k, j));
+              TRACE_RC3("add: %s(%s): flush obsolete method @%d in version @%d",
+                m_name->as_C_string(), m_signature->as_C_string(), k, j);
 
               method->set_is_obsolete();
               JNIHandles::destroy_weak_global(method_ref);

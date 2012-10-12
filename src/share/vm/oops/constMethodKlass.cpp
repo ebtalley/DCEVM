@@ -101,6 +101,7 @@ void constMethodKlass::oop_follow_contents(oop obj) {
   MarkSweep::mark_and_push(cm->adr_method());
   MarkSweep::mark_and_push(cm->adr_stackmap_data());
   MarkSweep::mark_and_push(cm->adr_exception_table());
+  MarkSweep::mark_and_push(cm->adr_code_section_table());
   // Performance tweak: We skip iterating over the klass pointer since we
   // know that Universe::constMethodKlassObj never moves.
 }
@@ -113,6 +114,7 @@ void constMethodKlass::oop_follow_contents(ParCompactionManager* cm,
   PSParallelCompact::mark_and_push(cm, cm_oop->adr_method());
   PSParallelCompact::mark_and_push(cm, cm_oop->adr_stackmap_data());
   PSParallelCompact::mark_and_push(cm, cm_oop->adr_exception_table());
+  PSParallelCompact::mark_and_push(cm, cm_oop->adr_code_section_table());
   // Performance tweak: We skip iterating over the klass pointer since we
   // know that Universe::constMethodKlassObj never moves.
 }
@@ -124,6 +126,7 @@ int constMethodKlass::oop_oop_iterate(oop obj, OopClosure* blk) {
   blk->do_oop(cm->adr_method());
   blk->do_oop(cm->adr_stackmap_data());
   blk->do_oop(cm->adr_exception_table());
+  blk->do_oop(cm->adr_code_section_table());
   // Get size before changing pointers.
   // Don't call size() or oop_size() since that is a virtual call.
   int size = cm->object_size();
@@ -141,6 +144,8 @@ int constMethodKlass::oop_oop_iterate_m(oop obj, OopClosure* blk, MemRegion mr) 
   if (mr.contains(adr)) blk->do_oop(adr);
   adr = cm->adr_exception_table();
   if (mr.contains(adr)) blk->do_oop(adr);
+  adr = cm->adr_code_section_table();
+  if (mr.contains(adr)) blk->do_oop(adr);
   // Get size before changing pointers.
   // Don't call size() or oop_size() since that is a virtual call.
   int size = cm->object_size();
@@ -156,6 +161,7 @@ int constMethodKlass::oop_adjust_pointers(oop obj) {
   MarkSweep::adjust_pointer(cm->adr_method());
   MarkSweep::adjust_pointer(cm->adr_stackmap_data());
   MarkSweep::adjust_pointer(cm->adr_exception_table());
+  MarkSweep::adjust_pointer(cm->adr_code_section_table());
   // Get size before changing pointers.
   // Don't call size() or oop_size() since that is a virtual call.
   int size = cm->object_size();

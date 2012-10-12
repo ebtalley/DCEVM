@@ -97,7 +97,8 @@ void klassVtable::compute_vtable_size_and_num_mirandas(int &vtable_length,
     vtable_length = Universe::base_vtable_size();
   }
 
-  if (super == NULL && !Universe::is_bootstrapping() &&
+  // (tw) TODO: Check if we can relax the condition on a fixed base vtable size
+  /*if (super == NULL && !Universe::is_bootstrapping() &&
       vtable_length != Universe::base_vtable_size()) {
     // Someone is attempting to redefine java.lang.Object incorrectly.  The
     // only way this should happen is from
@@ -107,9 +108,9 @@ void klassVtable::compute_vtable_size_and_num_mirandas(int &vtable_length,
     vtable_length = Universe::base_vtable_size();
   }
   assert(super != NULL || vtable_length == Universe::base_vtable_size(),
-         "bad vtable size for class Object");
+         "bad vtable size for class Object");*/
   assert(vtable_length % vtableEntry::size() == 0, "bad vtable length");
-  assert(vtable_length >= Universe::base_vtable_size(), "vtable too small");
+  //assert(vtable_length >= Universe::base_vtable_size(), "vtable too small");
 }
 
 int klassVtable::index_of(methodOop m, int len) const {
@@ -628,17 +629,13 @@ void klassVtable::adjust_method_entries(methodOop* old_methods, methodOop* new_m
       if (unchecked_method_at(index) == old_method) {
         put_method_at(new_method, index);
 
-        if (RC_TRACE_IN_RANGE(0x00100000, 0x00400000)) {
+        IF_TRACE_RC4 {
           if (!(*trace_name_printed)) {
-            // RC_TRACE_MESG macro has an embedded ResourceMark
-            RC_TRACE_MESG(("adjust: name=%s",
-                           Klass::cast(old_method->method_holder())->external_name()));
+            TRACE_RC4("adjust: name=%s", Klass::cast(old_method->method_holder())->external_name());
             *trace_name_printed = true;
           }
-          // RC_TRACE macro has an embedded ResourceMark
-          RC_TRACE(0x00100000, ("vtable method update: %s(%s)",
-                                new_method->name()->as_C_string(),
-                                new_method->signature()->as_C_string()));
+          TRACE_RC4("vtable method update: %s(%s)", new_method->name()->as_C_string(),
+            new_method->signature()->as_C_string());
         }
       }
     }
@@ -982,17 +979,13 @@ void klassItable::adjust_method_entries(methodOop* old_methods, methodOop* new_m
       if (ime->method() == old_method) {
         ime->initialize(new_method);
 
-        if (RC_TRACE_IN_RANGE(0x00100000, 0x00400000)) {
+        IF_TRACE_RC4 {
           if (!(*trace_name_printed)) {
-            // RC_TRACE_MESG macro has an embedded ResourceMark
-            RC_TRACE_MESG(("adjust: name=%s",
-              Klass::cast(old_method->method_holder())->external_name()));
+            TRACE_RC4("adjust: name=%s", Klass::cast(old_method->method_holder())->external_name());
             *trace_name_printed = true;
           }
-          // RC_TRACE macro has an embedded ResourceMark
-          RC_TRACE(0x00200000, ("itable method update: %s(%s)",
-            new_method->name()->as_C_string(),
-            new_method->signature()->as_C_string()));
+          TRACE_RC4("itable method update: %s(%s)", new_method->name()->as_C_string(),
+            new_method->signature()->as_C_string());
         }
         break;
       }
@@ -1186,6 +1179,7 @@ void klassVtable::verify(outputStream* st, bool forced) {
 
 void klassVtable::verify_against(outputStream* st, klassVtable* vt, int index) {
   vtableEntry* vte = &vt->table()[index];
+  if (vte->method() == NULL || table()[index].method() == NULL) return;
   if (vte->method()->name()      != table()[index].method()->name() ||
       vte->method()->signature() != table()[index].method()->signature()) {
     fatal("mismatched name/signature of vtable entries");
@@ -1205,6 +1199,8 @@ void klassVtable::print() {
 
 void vtableEntry::verify(klassVtable* vt, outputStream* st) {
   NOT_PRODUCT(FlagSetting fs(IgnoreLockingAssertions, true));
+  // (tw) TODO: Check: Does not hold?
+  if (method() != NULL) {
   assert(method() != NULL, "must have set method");
   method()->verify();
   // we sub_type, because it could be a miranda method
@@ -1212,7 +1208,13 @@ void vtableEntry::verify(klassVtable* vt, outputStream* st) {
 #ifndef PRODUCT
     print();
 #endif
-    fatal(err_msg("vtableEntry " PTR_FORMAT ": method is from subclass", this));
+      klassOop first_klass = vt->klass()();
+      klassOop second_klass = method()->method_holder();
+      // (tw) the following fatal does not work for old versions of classes
+      if (first_klass->klass_part()->is_newest_version()) {
+        //fatal1("vtableEntry %#lx: method is from subclass", this);
+      }
+    }
   }
 }
 
@@ -1220,7 +1222,7 @@ void vtableEntry::verify(klassVtable* vt, outputStream* st) {
 
 void vtableEntry::print() {
   ResourceMark rm;
-  tty->print("vtableEntry %s: ", method()->name()->as_C_string());
+  tty->print("vtableEntry %s: ", (method() == NULL) ? "null" : method()->name()->as_C_string());
   if (Verbose) {
     tty->print("m %#lx ", (address)method());
   }
@@ -1292,7 +1294,7 @@ bool klassVtable::check_no_old_entries() {
   for (int i = 0; i < length(); i++) {
     methodOop m = unchecked_method_at(i);
     if (m != NULL) {
-        if (m->is_old()) {
+        if (m->is_old() || !m->method_holder()->klass_part()->is_newest_version()) {
             return false;
         }
     }

@@ -135,19 +135,24 @@ class ConstantPoolCacheEntry VALUE_OBJ_CLASS_SPEC {
   void set_bytecode_2(Bytecodes::Code code);
   void set_f1(oop f1)                            {
     oop existing_f1 = _f1; // read once
-    assert(existing_f1 == NULL || existing_f1 == f1, "illegal field change");
+    // (tw) need to relax assertion for redefinition
+    // assert(existing_f1 == NULL || existing_f1 == f1, "illegal field change");
     oop_store(&_f1, f1);
   }
   void set_f1_if_null_atomic(oop f1);
-  void set_f2(intx f2)                           { assert(_f2 == 0    || _f2 == f2, "illegal field change"); _f2 = f2; }
+  void set_f2(intx f2)                           { 
+    // (tw) need to relax assertion for redefinition
+    // assert(_f2 == 0    || _f2 == f2, "illegal field change");
+    _f2 = f2; }
   int as_flags(TosState state, bool is_final, bool is_vfinal, bool is_volatile,
-               bool is_method_interface, bool is_method);
+               bool is_method_interface, bool is_method, bool is_old_method);
   void set_flags(intx flags)                     { _flags = flags; }
 
  public:
   // specific bit values in flag field
   // Note: the interpreter knows this layout!
   enum FlagBitValues {
+    oldMethodBit  = 22,
     hotSwapBit    = 23,
     methodInterface = 24,
     volatileField = 25,
@@ -166,6 +171,8 @@ class ConstantPoolCacheEntry VALUE_OBJ_CLASS_SPEC {
   // Initialization
   void initialize_entry(int original_index);     // initialize primary entry
   void initialize_secondary_entry(int main_index); // initialize secondary entry
+
+  void copy_from(ConstantPoolCacheEntry *other);
 
   void set_field(                                // sets entry to resolved field state
     Bytecodes::Code get_code,                    // the bytecode used for reading the field
@@ -296,9 +303,7 @@ class ConstantPoolCacheEntry VALUE_OBJ_CLASS_SPEC {
   // trace_name_printed is set to true if the current call has
   // printed the klass name so that other routines in the adjust_*
   // group don't print the klass name.
-  bool adjust_method_entry(methodOop old_method, methodOop new_method,
-         bool * trace_name_printed);
-  bool is_interesting_method_entry(klassOop k);
+  bool adjust_method_entry(methodOop old_method, methodOop new_method);
   bool is_field_entry() const                    { return (_flags & (1 << hotSwapBit)) == 0; }
   bool is_method_entry() const                   { return (_flags & (1 << hotSwapBit)) != 0; }
 
@@ -397,14 +402,9 @@ class constantPoolCacheOopDesc: public oopDesc {
     return (base_offset() + ConstantPoolCacheEntry::size_in_bytes() * index);
   }
 
-  // RedefineClasses() API support:
-  // If any entry of this constantPoolCache points to any of
-  // old_methods, replace it with the corresponding new_method.
-  // trace_name_printed is set to true if the current call has
-  // printed the klass name so that other routines in the adjust_*
-  // group don't print the klass name.
-  void adjust_method_entries(methodOop* old_methods, methodOop* new_methods,
-                             int methods_length, bool * trace_name_printed);
+  // (tw) Update method and field references
+  void adjust_entries(methodOop* old_methods, methodOop* new_methods,
+                             int methods_length);
 };
 
 #endif // SHARE_VM_OOPS_CPCACHEOOP_HPP

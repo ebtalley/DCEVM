@@ -103,7 +103,7 @@ bool Verifier::relax_verify_for(oop loader) {
   return !need_verify;
 }
 
-bool Verifier::verify(instanceKlassHandle klass, Verifier::Mode mode, bool should_verify_class, TRAPS) {
+bool Verifier::verify(instanceKlassHandle klass, Verifier::Mode mode, bool should_verify_class, bool may_use_old_verifier, TRAPS) {
   HandleMark hm;
   ResourceMark rm(THREAD);
 
@@ -127,17 +127,19 @@ bool Verifier::verify(instanceKlassHandle klass, Verifier::Mode mode, bool shoul
         split_verifier.verify_class(THREAD);
         exception_name = split_verifier.result();
       if (klass->major_version() < NOFAILOVER_MAJOR_VERSION &&
-          FailOverToOldVerifier && !HAS_PENDING_EXCEPTION &&
+          FailOverToOldVerifier && may_use_old_verifier && !HAS_PENDING_EXCEPTION &&
           (exception_name == vmSymbols::java_lang_VerifyError() ||
            exception_name == vmSymbols::java_lang_ClassFormatError())) {
         if (TraceClassInitialization) {
           tty->print_cr(
             "Fail over class verification to old verifier for: %s", klassName);
         }
+        assert(may_use_old_verifier, "");
         exception_name = inference_verify(
           klass, message_buffer, message_buffer_len, THREAD);
       }
     } else {
+      assert(may_use_old_verifier, "");
       exception_name = inference_verify(
           klass, message_buffer, message_buffer_len, THREAD);
     }
@@ -152,6 +154,9 @@ bool Verifier::verify(instanceKlassHandle klass, Verifier::Mode mode, bool shoul
       }
       tty->print_cr("End class verification for: %s", klassName);
     }
+  } else if (TraceClassInitialization) {
+    // (tw) Output not verified classes
+    tty->print_cr("Class %s was not verified", klassName);
   }
 
   if (HAS_PENDING_EXCEPTION) {
@@ -203,7 +208,7 @@ bool Verifier::is_eligible_for_verification(instanceKlassHandle klass, bool shou
     // NOTE: this is called too early in the bootstrapping process to be
     // guarded by Universe::is_gte_jdk14x_version()/UseNewReflection.
     (refl_magic_klass == NULL ||
-     !klass->is_subtype_of(refl_magic_klass) ||
+     !(klass->is_subtype_of(refl_magic_klass) || klass->is_subtype_of(refl_magic_klass->klass_part()->newest_version())) ||
      VerifyReflectionBytecodes)
   );
 }
@@ -272,7 +277,7 @@ bool ClassVerifier::_verify_verbose = false;
 ClassVerifier::ClassVerifier(
     instanceKlassHandle klass, char* msg, size_t msg_len, TRAPS)
     : _thread(THREAD), _exception_type(NULL), _message(msg),
-      _message_buffer_len(msg_len), _klass(klass) {
+      _message_buffer_len(msg_len), _klass(klass->newest_version()), _klass_to_verify(klass) {
   _this_type = VerificationType::reference_type(klass->name());
   // Create list to hold symbols in reference area.
   _symbols = new GrowableArray<Symbol*>(100, 0, NULL);
@@ -296,7 +301,7 @@ void ClassVerifier::verify_class(TRAPS) {
       _klass->external_name());
   }
 
-  objArrayHandle methods(THREAD, _klass->methods());
+  objArrayHandle methods(THREAD, _klass_to_verify->methods());
   int num_methods = methods->length();
 
   for (int index = 0; index < num_methods; index++) {
@@ -2081,7 +2086,10 @@ void ClassVerifier::verify_invoke_instructions(
         VerificationType stack_object_type =
           current_frame->pop_stack(ref_class_type, CHECK_VERIFY(this));
         if (current_type() != stack_object_type) {
-          assert(cp->cache() == NULL, "not rewritten yet");
+          
+          // (tw) TODO: Check if relaxing the following assertion is correct. For class redefinition we might call the verifier twice.
+          //assert(cp->cache() == NULL, "not rewritten yet");
+
           Symbol* ref_class_name =
             cp->klass_name_at(cp->klass_ref_index_at(index));
           // See the comments in verify_field_instructions() for

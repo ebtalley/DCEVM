@@ -286,6 +286,8 @@ address JvmtiBreakpoint::getBcp() {
 void JvmtiBreakpoint::each_method_version_do(method_action meth_act) {
   ((methodOopDesc*)_method->*meth_act)(_bci);
 
+  // (tw) TODO: Check how we can implement this differently here!
+
   // add/remove breakpoint to/from versions of the method that
   // are EMCP. Directly or transitively obsolete methods are
   // not saved in the PreviousVersionInfo.
@@ -325,10 +327,10 @@ void JvmtiBreakpoint::each_method_version_do(method_action meth_act) {
         for (int i = methods->length() - 1; i >= 0; i--) {
           methodHandle method = methods->at(i);
           if (method->name() == m_name && method->signature() == m_signature) {
-            RC_TRACE(0x00000800, ("%sing breakpoint in %s(%s)",
+            TRACE_RC3("%sing breakpoint in %s(%s)",
               meth_act == &methodOopDesc::set_breakpoint ? "sett" : "clear",
               method->name()->as_C_string(),
-              method->signature()->as_C_string()));
+              method->signature()->as_C_string());
             assert(!method->is_obsolete(), "only EMCP methods here");
 
             ((methodOopDesc*)method()->*meth_act)(_bci);

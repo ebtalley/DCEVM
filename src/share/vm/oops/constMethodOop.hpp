@@ -114,7 +114,7 @@ private:
 
 public:
   oop* oop_block_beg() const { return adr_method(); }
-  oop* oop_block_end() const { return adr_exception_table() + 1; }
+  oop* oop_block_end() const { return adr_code_section_table() + 1; }
 
 private:
   //
@@ -131,6 +131,10 @@ private:
   // handler_pc, catch_type index] For methods with no exceptions the
   // table is pointing to Universe::the_empty_int_array
   typeArrayOop      _exception_table;
+
+
+  // (tw) Table mapping code sections for method forward points.
+  typeArrayOop      _code_section_table;
 
   //
   // End of the oop block.
@@ -183,6 +187,28 @@ public:
   typeArrayOop exception_table() const           { return _exception_table; }
   void set_exception_table(typeArrayOop e)       { oop_store_without_check((oop*) &_exception_table, (oop) e); }
   bool has_exception_handler() const             { return exception_table() != NULL && exception_table()->length() > 0; }
+
+  // code section table
+  typeArrayOop code_section_table() const         { return _code_section_table; }
+  void set_code_section_table(typeArrayOop e)     { oop_store_without_check((oop*) &_code_section_table, (oop) e); }
+  bool has_code_section_table() const             { return code_section_table() != NULL && code_section_table()->length() > 0; }
+  static const int ValuesPerCodeSectionEntry = 3;
+  int code_section_entries() const {
+    if (!has_code_section_table()) return 0;
+    return _code_section_table->length() / ValuesPerCodeSectionEntry;
+  }
+
+  int code_section_new_index_at(int index) const {
+    return _code_section_table->short_at(index * ValuesPerCodeSectionEntry);
+  }
+
+  int code_section_original_index_at(int index) const {
+    return _code_section_table->short_at(index * ValuesPerCodeSectionEntry + 1);
+  }
+
+  int code_section_length_at(int index) const {
+    return _code_section_table->short_at(index * ValuesPerCodeSectionEntry + 2);
+  }
 
   void init_fingerprint() {
     const uint64_t initval = CONST64(0x8000000000000000);
@@ -285,6 +311,7 @@ public:
   oop*  adr_method() const             { return (oop*)&_method;          }
   oop*  adr_stackmap_data() const      { return (oop*)&_stackmap_data;   }
   oop*  adr_exception_table() const    { return (oop*)&_exception_table; }
+  oop*  adr_code_section_table() const { return (oop*)&_code_section_table; }
   bool is_conc_safe() { return _is_conc_safe; }
   void set_is_conc_safe(bool v) { _is_conc_safe = v; }
 
