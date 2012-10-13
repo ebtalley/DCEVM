@@ -1144,21 +1144,13 @@ void instanceKlass::do_fields_evolution(FieldEvolutionClosure* cl) {
   } else {
 
     _fields_not_changed = true;
-
-
     GrowableArray<fieldDescriptor> fds;
-
-
     while (true) {
-
       for (JavaFieldStream fs(cur_new_klass); !fs.done(); fs.next()) {
-
         fd.initialize(cur_new_klass_oop, fs.index());
-
         if (fd.is_static()) {
           continue;
         }
-
         fds.append(fd);
       }
 
@@ -1171,9 +1163,7 @@ void instanceKlass::do_fields_evolution(FieldEvolutionClosure* cl) {
     }
 
     GrowableArray<fieldDescriptor> sortedFds;
-
     while (fds.length() > 0) {
-
       int minOffset = 0x7fffffff;
       int minIndex = -1;
       for (int i=0; i<fds.length(); i++) {
@@ -1190,7 +1180,6 @@ void instanceKlass::do_fields_evolution(FieldEvolutionClosure* cl) {
 
 
     for (int i=0; i<sortedFds.length(); i++) {
-
       fieldDescriptor &fd = *sortedFds.adr_at(i);
 
       char found = 0;
@@ -1198,19 +1187,15 @@ void instanceKlass::do_fields_evolution(FieldEvolutionClosure* cl) {
       klassOop cur_old_klass_oop = old_klass_oop;
       while (true) {
         for (JavaFieldStream fs(cur_old_klass); !fs.done(); fs.next()) {
-
           old_fd.initialize(cur_old_klass_oop, fs.index());
-
           if (old_fd.is_static()) {
             continue;
           }
-
           if (old_fd.name() == fd.name() && old_fd.signature() == fd.signature()) {
             found = 1;
             break;
           }
         }
-
         if (!found && cur_old_klass->super()) {
           cur_old_klass_oop = cur_old_klass->super();
           cur_old_klass = instanceKlass::cast(cur_old_klass_oop);
