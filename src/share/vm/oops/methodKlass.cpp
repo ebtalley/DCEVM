@@ -267,8 +267,8 @@ void methodKlass::oop_print_on(oop obj, outputStream* st) {
 
   st->print_cr(" - is obsolete:       %d",   (int)(m->is_obsolete()));
   st->print_cr(" - is old:            %d",   (int)(m->is_old()));
-  st->print_cr(" - new version:       %d",   (int)(m->new_version()));
-  st->print_cr(" - old version:       %d",   (int)(m->old_version()));
+  st->print_cr(" - new version:       "INTPTR_FORMAT" ",   (address)(m->new_version()));
+  st->print_cr(" - old version:       "INTPTR_FORMAT" ",   (address)(m->old_version()));
   st->print_cr(" - holder revision:   %d", m->method_holder()->klass_part()->revision_number());
   st->print   (" - constants:         "INTPTR_FORMAT" ", (address)m->constants());
   m->constants()->print_value_on(st); st->cr();
