@@ -3171,19 +3171,20 @@ void TemplateTable::invokeinterface(int byte_no) {
 
   // DCEVM: Check if we are calling an old method (and have to go slow path)
   Label notOld;
-  //__ movl(rax, rdx);
   __ andl(rdx, (1 << ConstantPoolCacheEntry::oldMethodBit));
   __ jcc(Assembler::zero, notOld);
 
   // Get receiver klass into rdx - also a null check
-  __ movptr(rdx, Address(rcx, oopDesc::klass_offset_in_bytes()));
+  __ restore_locals(); // restore r14
+  __ load_klass(rdx, rcx);
   __ verify_oop(rdx);
 
   // Call out to VM to do look up based on correct vTable version (has to iterate back over the class history of the receiver class)
   // DCEVM: TODO: Check if we can improve performance by inlining.
   // DCEVM: TODO: Check if this additional branch affects normal execution time.
   // DCEVM: TODO: Check the exact semantic (with respect to destoying registers) of call_VM
-  __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::find_correct_interface_method), rcx, rax, rbx);
+  __ movl(r13, rcx);
+  __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::find_correct_interface_method), r13, rax, rbx);
 
   // Method is now in rax
   __ movptr(rbx, rax);
@@ -3191,7 +3192,7 @@ void TemplateTable::invokeinterface(int byte_no) {
   // DCEVM: TODO: Check if resolved method could be null.
 
   // profile this call
-  __ profile_virtual_call(rdx, rsi, rdi);
+  __ profile_virtual_call(rdx, r13, r14);
 
   __ jump_from_interpreted(rbx, rdx);
 
