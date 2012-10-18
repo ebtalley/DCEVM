@@ -3172,20 +3172,20 @@ void TemplateTable::invokeinterface(int byte_no) {
   __ andl(rdx, (1 << ConstantPoolCacheEntry::oldMethodBit));
   __ jcc(Assembler::zero, notOld);
 
-  // Get receiver klass into rdx - also a null check
-  __ restore_locals(); // restore r14
-  __ load_klass(rdx, rcx);
-  __ verify_oop(rdx);
-
   // Call out to VM to do look up based on correct vTable version (has to iterate back over the class history of the receiver class)
   // DCEVM: TODO: Check if we can improve performance by inlining.
   // DCEVM: TODO: Check if this additional branch affects normal execution time.
   // DCEVM: TODO: Check the exact semantic (with respect to destoying registers) of call_VM
-  __ movptr(r13, rcx);
-  __ call_VM(rax, CAST_FROM_FN_PTR(address, InterpreterRuntime::find_correct_interface_method), r13, rax, rbx);
+  // DCEVM: FIXME: What exactly should we store here?
+  __ push(rcx); // destroyed by Linux arguments passing conventions
+  __ movptr(r14, rcx);
+  __ call_VM(rbx, CAST_FROM_FN_PTR(address, InterpreterRuntime::find_correct_interface_method), r14, rax, rbx);
+  __ pop(rcx);
 
-  // Method is now in rax
-  __ movptr(rbx, rax);
+  // Get receiver klass into rdx - also a null check
+  __ restore_locals(); // restore r14
+  __ load_klass(rdx, rcx);
+  __ verify_oop(rdx);
 
   // DCEVM: TODO: Check if resolved method could be null.
 
