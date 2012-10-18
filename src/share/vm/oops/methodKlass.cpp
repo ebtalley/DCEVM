@@ -235,6 +235,7 @@ int methodKlass::oop_update_pointers(ParCompactionManager* cm, oop obj) {
   assert(obj->is_method(), "should be method");
   methodOop m = methodOop(obj);
   PSParallelCompact::adjust_pointer(m->adr_constMethod());
+  PSParallelCompact::adjust_pointer(m->adr_forward_method());
   PSParallelCompact::adjust_pointer(m->adr_new_version());
   PSParallelCompact::adjust_pointer(m->adr_old_version());
   PSParallelCompact::adjust_pointer(m->adr_constants());
