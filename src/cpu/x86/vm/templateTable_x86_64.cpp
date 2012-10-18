@@ -3183,7 +3183,7 @@ void TemplateTable::invokeinterface(int byte_no) {
   // DCEVM: TODO: Check if we can improve performance by inlining.
   // DCEVM: TODO: Check if this additional branch affects normal execution time.
   // DCEVM: TODO: Check the exact semantic (with respect to destoying registers) of call_VM
-  __ movl(r13, rcx);
+  __ movptr(r13, rcx);
   __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::find_correct_interface_method), r13, rax, rbx);
 
   // Method is now in rax
