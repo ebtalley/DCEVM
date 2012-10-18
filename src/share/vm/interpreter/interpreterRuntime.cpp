@@ -712,7 +712,7 @@ IRT_ENTRY(void, InterpreterRuntime::forward_method(JavaThread *thread))
 IRT_END
 
 // (tw) Correctly resolve method when running old code.
-IRT_ENTRY(methodOop, InterpreterRuntime::find_correct_method(JavaThread *thread, oopDesc* receiverOop, int vTableIndex))
+IRT_ENTRY(void, InterpreterRuntime::find_correct_method(JavaThread *thread, oopDesc* receiverOop, int vTableIndex))
   // extract receiver from the outgoing argument list if necessary
   Handle receiver(thread, receiverOop);
 
@@ -727,11 +727,12 @@ IRT_ENTRY(methodOop, InterpreterRuntime::find_correct_method(JavaThread *thread,
 
   // TODO: Check for correctness if different vtable indices in different versions?
 
-  return ((instanceKlass *)klass->klass_part())->method_at_vtable(vTableIndex);
+  methodOop method = ((instanceKlass *)klass->klass_part())->method_at_vtable(vTableIndex);
+  thread->set_vm_result(method);
 IRT_END
 
 // Correctly resolve interface method when running old code.
-IRT_ENTRY(methodOop, InterpreterRuntime::find_correct_interface_method(JavaThread *thread, oopDesc* receiverOop, oopDesc* interface_klass, int vTableIndex))
+IRT_ENTRY(void, InterpreterRuntime::find_correct_interface_method(JavaThread *thread, oopDesc* receiverOop, oopDesc* interface_klass, int vTableIndex))
 
   // extract receiver from the outgoing argument list if necessary
   Handle receiver(thread, receiverOop);
@@ -745,8 +746,8 @@ IRT_ENTRY(methodOop, InterpreterRuntime::find_correct_interface_method(JavaThrea
     klass = klass->klass_part()->old_version();
   }
 
-  methodOop result = ((instanceKlass *)klass->klass_part())->method_at_itable((klassOop)interface_klass, vTableIndex, THREAD);
-  return result;
+  methodOop method = ((instanceKlass *)klass->klass_part())->method_at_itable((klassOop)interface_klass, vTableIndex, THREAD);
+  thread->set_vm_result(method);
 IRT_END
 
 IRT_ENTRY(void, InterpreterRuntime::resolve_invoke(JavaThread* thread, Bytecodes::Code bytecode))

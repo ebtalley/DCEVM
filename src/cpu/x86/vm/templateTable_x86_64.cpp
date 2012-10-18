@@ -3076,9 +3076,7 @@ void TemplateTable::invokevirtual_helper(Register index,
   // Call out to VM to do look up based on correct vTable version (has to iterate back over the class history of the receiver class)
   // DCEVM: TODO: Check if we can improve performance by inlining.
   // DCEVM: TODO: Check if this additional branch affects normal execution time.
-  __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::find_correct_method), recv, index);
-  // Method is now in rax
-  __ mov(method, rax);
+  __ call_VM(method, CAST_FROM_FN_PTR(address, InterpreterRuntime::find_correct_method), recv, index);
 
   // profile this call
   __ profile_final_call(rax);
@@ -3184,7 +3182,7 @@ void TemplateTable::invokeinterface(int byte_no) {
   // DCEVM: TODO: Check if this additional branch affects normal execution time.
   // DCEVM: TODO: Check the exact semantic (with respect to destoying registers) of call_VM
   __ movptr(r13, rcx);
-  __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::find_correct_interface_method), r13, rax, rbx);
+  __ call_VM(rax, CAST_FROM_FN_PTR(address, InterpreterRuntime::find_correct_interface_method), r13, rax, rbx);
 
   // Method is now in rax
   __ movptr(rbx, rax);
