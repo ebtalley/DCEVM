@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -336,7 +336,9 @@ extern "C" {
     // Return 0 (success) + file descriptor, or non-0 (error)
     if (res == 0) {
       door_desc_t desc;
-      desc.d_attributes = DOOR_DESCRIPTOR;
+      // DOOR_RELEASE flag makes sure fd is closed after passing it to
+      // the client.  See door_return(3DOOR) man page.
+      desc.d_attributes = DOOR_DESCRIPTOR | DOOR_RELEASE;
       desc.d_data.d_desc.d_descriptor = return_fd;
       door_return((char*)&res, sizeof(res), &desc, 1);
     } else {
@@ -572,6 +574,30 @@ AttachOperation* AttachListener::dequeue() {
   thread->check_and_wait_while_suspended();
 
   return op;
+}
+
+
+// Performs initialization at vm startup
+// For Solaris we remove any stale .java_pid file which could cause
+// an attaching process to think we are ready to receive a door_call
+// before we are properly initialized
+
+void AttachListener::vm_start() {
+  char fn[PATH_MAX+1];
+  struct stat64 st;
+  int ret;
+
+  int n = snprintf(fn, sizeof(fn), "%s/.java_pid%d",
+           os::get_temp_directory(), os::current_process_id());
+  assert(n < sizeof(fn), "java_pid file name buffer overflow");
+
+  RESTARTABLE(::stat64(fn, &st), ret);
+  if (ret == 0) {
+    ret = ::unlink(fn);
+    if (ret == -1) {
+      debug_only(warning("failed to remove stale attach pid file at %s", fn));
+    }
+  }
 }
 
 int AttachListener::pd_init() {

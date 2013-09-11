@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -41,7 +41,9 @@
 #include "runtime/stubRoutines.hpp"
 #include "runtime/threadLocalStorage.hpp"
 #include "runtime/unhandledOops.hpp"
-#include "trace/tracing.hpp"
+#include "services/memRecorder.hpp"
+#include "trace/traceBackend.hpp"
+#include "trace/traceMacros.hpp"
 #include "utilities/exceptions.hpp"
 #include "utilities/top.hpp"
 #ifndef SERIALGC
@@ -100,12 +102,16 @@ class Thread: public ThreadShadow {
   //oop       _pending_exception;                // pending exception for current thread
   // const char* _exception_file;                   // file information for exception (debugging only)
   // int         _exception_line;                   // line information for exception (debugging only)
-
+ protected:
   // Support for forcing alignment of thread objects for biased locking
   void*       _real_malloc_address;
  public:
-  void* operator new(size_t size);
+  void* operator new(size_t size) { return allocate(size, true); }
+  void* operator new(size_t size, std::nothrow_t& nothrow_constant) { return allocate(size, false); }
   void  operator delete(void* p);
+
+ protected:
+   static void* allocate(size_t size, bool throw_excpt, MEMFLAGS flags = mtThread);
  private:
 
   // ***************************************************************
@@ -251,7 +257,7 @@ class Thread: public ThreadShadow {
   jlong _allocated_bytes;                       // Cumulative number of bytes allocated on
                                                 // the Java heap
 
-  TRACE_BUFFER _trace_buffer;                   // Thread-local buffer for tracing
+  TRACE_DATA _trace_data;                       // Thread-local data for tracing
 
   int   _vm_operation_started_count;            // VM_Operation support
   int   _vm_operation_completed_count;          // VM_Operation support
@@ -439,8 +445,7 @@ class Thread: public ThreadShadow {
     return allocated_bytes;
   }
 
-  TRACE_BUFFER trace_buffer()              { return _trace_buffer; }
-  void set_trace_buffer(TRACE_BUFFER buf)  { _trace_buffer = buf; }
+  TRACE_DATA* trace_data()              { return &_trace_data; }
 
   // VM operation support
   int vm_operation_ticket()                      { return ++_vm_operation_started_count; }
@@ -504,6 +509,9 @@ public:
   // Check if address is in the stack of the thread (not just for locks).
   // Warning: the method can only be used on the running thread
   bool is_in_stack(address adr) const;
+  // Check if address is in the usable part of the stack (excludes protected
+  // guard pages)
+  bool is_in_usable_stack(address adr) const;
 
   // Sets this thread as starting thread. Returns failure if thread
   // creation fails due to lack of memory, too many threads etc.
@@ -556,7 +564,6 @@ public:
   virtual void print_on_error(outputStream* st, char* buf, int buflen) const;
 
   // Debug-only code
-
 #ifdef ASSERT
  private:
   // Deadlock detection support for Mutex locks. List of locks own by thread.
@@ -716,7 +723,10 @@ class WatcherThread: public Thread {
  private:
   static WatcherThread* _watcher_thread;
 
+  static bool _startable;
   volatile static bool _should_terminate; // updated without holding lock
+
+  os::WatcherThreadCrashProtection* _crash_protection;
  public:
   enum SomeConstants {
     delay_interval = 10                          // interrupt delay in milliseconds
@@ -732,6 +742,7 @@ class WatcherThread: public Thread {
   char* name() const { return (char*)"VM Periodic Task Thread"; }
   void print_on(outputStream* st) const;
   void print() const { print_on(tty); }
+  void unpark();
 
   // Returns the single instance of WatcherThread
   static WatcherThread* watcher_thread()         { return _watcher_thread; }
@@ -739,6 +750,20 @@ class WatcherThread: public Thread {
   // Create and start the single instance of WatcherThread, or stop it on shutdown
   static void start();
   static void stop();
+  // Only allow start once the VM is sufficiently initialized
+  // Otherwise the first task to enroll will trigger the start
+  static void make_startable();
+
+  void set_crash_protection(os::WatcherThreadCrashProtection* crash_protection) {
+    assert(Thread::current()->is_Watcher_thread(), "Can only be set by WatcherThread");
+    _crash_protection = crash_protection;
+  }
+
+  bool has_crash_protection() const { return _crash_protection != NULL; }
+  os::WatcherThreadCrashProtection* crash_protection() const { return _crash_protection; }
+
+ private:
+  int sleep() const;
 };
 
 
@@ -1036,9 +1061,15 @@ class JavaThread: public Thread {
   bool do_not_unlock_if_synchronized()             { return _do_not_unlock_if_synchronized; }
   void set_do_not_unlock_if_synchronized(bool val) { _do_not_unlock_if_synchronized = val; }
 
+  // native memory tracking
+  inline MemRecorder* get_recorder() const          { return (MemRecorder*)_recorder; }
+  inline void         set_recorder(MemRecorder* rc) { _recorder = rc; }
+
+ private:
+  // per-thread memory recorder
+  MemRecorder* volatile _recorder;
 
   // Suspend/resume support for JavaThread
-
  private:
   void set_ext_suspended()       { set_suspend_flag (_ext_suspended);  }
   void clear_ext_suspended()     { clear_suspend_flag(_ext_suspended); }
@@ -1264,6 +1295,7 @@ class JavaThread: public Thread {
   void enable_stack_red_zone();
   void disable_stack_red_zone();
 
+  inline bool stack_guard_zone_unused();
   inline bool stack_yellow_zone_disabled();
   inline bool stack_yellow_zone_enabled();
 
@@ -1461,6 +1493,18 @@ public:
      _thread_profiler = tp;
      return result;
    }
+
+ // NMT (Native memory tracking) support.
+ // This flag helps NMT to determine if this JavaThread will be blocked
+ // at safepoint. If not, ThreadCritical is needed for writing memory records.
+ // JavaThread is only safepoint visible when it is in Threads' thread list,
+ // it is not visible until it is added to the list and becomes invisible
+ // once it is removed from the list.
+ public:
+  bool is_safepoint_visible() const { return _safepoint_visible; }
+  void set_safepoint_visible(bool visible) { _safepoint_visible = visible; }
+ private:
+  bool _safepoint_visible;
 
   // Static operations
  public:
@@ -1717,6 +1761,10 @@ inline JavaThread* JavaThread::current() {
 inline CompilerThread* JavaThread::as_CompilerThread() {
   assert(is_Compiler_thread(), "just checking");
   return (CompilerThread*)this;
+}
+
+inline bool JavaThread::stack_guard_zone_unused() {
+  return _stack_guard_state == stack_guard_unused;
 }
 
 inline bool JavaThread::stack_yellow_zone_disabled() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2011, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -641,9 +641,21 @@ void klassVtable::adjust_method_entries(methodOop* old_methods, methodOop* new_m
                                 new_method->name()->as_C_string(),
                                 new_method->signature()->as_C_string()));
         }
+        // cannot 'break' here; see for-loop comment above.
       }
     }
   }
+}
+
+// a vtable should never contain old or obsolete methods
+bool klassVtable::check_no_old_or_obsolete_entries() {
+  for (int i = 0; i < length(); i++) {
+    methodOop m = unchecked_method_at(i);
+    if (m != NULL && (m->is_old() || m->is_obsolete())) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // CDS/RedefineClasses support - clear vtables so they can be reinitialized
@@ -995,10 +1007,39 @@ void klassItable::adjust_method_entries(methodOop* old_methods, methodOop* new_m
             new_method->name()->as_C_string(),
             new_method->signature()->as_C_string()));
         }
-        break;
+        // cannot 'break' here; see for-loop comment above.
       }
       ime++;
     }
+  }
+}
+
+// an itable should never contain old or obsolete methods
+bool klassItable::check_no_old_or_obsolete_entries() {
+  itableMethodEntry* ime = method_entry(0);
+  for (int i = 0; i < _size_method_table; i++) {
+    methodOop m = ime->method();
+    if (m != NULL && (m->is_old() || m->is_obsolete())) {
+      return false;
+    }
+    ime++;
+  }
+  return true;
+}
+
+void klassItable::dump_itable() {
+  itableMethodEntry* ime = method_entry(0);
+  tty->print_cr("itable dump --");
+  for (int i = 0; i < _size_method_table; i++) {
+    methodOop m = ime->method();
+    if (m != NULL) {
+      tty->print("      (%5d)  ", i);
+      m->access_flags().print_on(tty);
+      tty->print(" --  ");
+      m->print_name(tty);
+      tty->cr();
+    }
+    ime++;
   }
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,29 +31,43 @@
 #include <stdarg.h>
 
 // Simple class to format the ctor arguments into a fixed-sized buffer.
+class FormatBufferBase {
+ protected:
+  char* _buf;
+  inline FormatBufferBase(char* buf) : _buf(buf) {}
+ public:
+  operator const char *() const { return _buf; }
+};
+
+// Use resource area for buffer
+#define RES_BUFSZ 256
+class FormatBufferResource : public FormatBufferBase {
+ public:
+  FormatBufferResource(const char * format, ...);
+};
+
+// Use stack for buffer
 template <size_t bufsz = 256>
-class FormatBuffer {
+class FormatBuffer : public FormatBufferBase {
  public:
   inline FormatBuffer(const char * format, ...);
   inline void append(const char* format, ...);
   inline void print(const char* format, ...);
   inline void printv(const char* format, va_list ap);
-  operator const char *() const { return _buf; }
 
   char* buffer() { return _buf; }
   int size() { return bufsz; }
 
  private:
   FormatBuffer(const FormatBuffer &); // prevent copies
+  char _buffer[bufsz];
 
  protected:
-  char _buf[bufsz];
-
   inline FormatBuffer();
 };
 
 template <size_t bufsz>
-FormatBuffer<bufsz>::FormatBuffer(const char * format, ...) {
+FormatBuffer<bufsz>::FormatBuffer(const char * format, ...) : FormatBufferBase(_buffer) {
   va_list argp;
   va_start(argp, format);
   jio_vsnprintf(_buf, bufsz, format, argp);
@@ -61,7 +75,7 @@ FormatBuffer<bufsz>::FormatBuffer(const char * format, ...) {
 }
 
 template <size_t bufsz>
-FormatBuffer<bufsz>::FormatBuffer() {
+FormatBuffer<bufsz>::FormatBuffer() : FormatBufferBase(_buffer) {
   _buf[0] = '\0';
 }
 
@@ -93,6 +107,7 @@ void FormatBuffer<bufsz>::append(const char* format, ...) {
 
 // Used to format messages for assert(), guarantee(), fatal(), etc.
 typedef FormatBuffer<> err_msg;
+typedef FormatBufferResource err_msg_res;
 
 // assertions
 #ifdef ASSERT
@@ -220,7 +235,7 @@ bool is_error_reported();
 void set_error_reported();
 
 /* Test assert(), fatal(), guarantee(), etc. */
-NOT_PRODUCT(void test_error_handler(size_t test_num);)
+NOT_PRODUCT(void test_error_handler();)
 
 void pd_ps(frame f);
 void pd_obfuscate_location(char *buf, size_t buflen);

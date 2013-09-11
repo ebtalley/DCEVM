@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2011, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -116,11 +116,6 @@ methodOop methodKlass::allocate(constMethodHandle xconst,
 
   assert(m->is_parsable(), "must be parsable here.");
   assert(m->size() == size, "wrong size for object");
-  // We should not publish an uprasable object's reference
-  // into one that is parsable, since that presents problems
-  // for the concurrent parallel marking and precleaning phases
-  // of concurrent gc (CMS).
-  xconst->set_method(m);
   return m;
 }
 
@@ -134,7 +129,6 @@ void methodKlass::oop_follow_contents(oop obj) {
   MarkSweep::mark_and_push(m->adr_forward_method());
   MarkSweep::mark_and_push(m->adr_new_version());
   MarkSweep::mark_and_push(m->adr_old_version());
-  MarkSweep::mark_and_push(m->adr_constants());
   if (m->method_data() != NULL) {
     MarkSweep::mark_and_push(m->adr_method_data());
   }
@@ -151,7 +145,6 @@ void methodKlass::oop_follow_contents(ParCompactionManager* cm,
   PSParallelCompact::mark_and_push(cm, m->adr_forward_method());
   PSParallelCompact::mark_and_push(cm, m->adr_new_version());
   PSParallelCompact::mark_and_push(cm, m->adr_old_version());
-  PSParallelCompact::mark_and_push(cm, m->adr_constants());
 #ifdef COMPILER2
   if (m->method_data() != NULL) {
     PSParallelCompact::mark_and_push(cm, m->adr_method_data());
@@ -172,7 +165,6 @@ int methodKlass::oop_oop_iterate(oop obj, OopClosure* blk) {
   blk->do_oop(m->adr_forward_method());
   blk->do_oop(m->adr_new_version());
   blk->do_oop(m->adr_old_version());
-  blk->do_oop(m->adr_constants());
   if (m->method_data() != NULL) {
     blk->do_oop(m->adr_method_data());
   }
@@ -197,8 +189,6 @@ int methodKlass::oop_oop_iterate_m(oop obj, OopClosure* blk, MemRegion mr) {
   if (mr.contains(adr)) blk->do_oop(adr);
   adr = m->adr_old_version();
   if (mr.contains(adr)) blk->do_oop(adr);
-  adr = m->adr_constants();
-  if (mr.contains(adr)) blk->do_oop(adr);
   if (m->method_data() != NULL) {
     adr = m->adr_method_data();
     if (mr.contains(adr)) blk->do_oop(adr);
@@ -219,7 +209,6 @@ int methodKlass::oop_adjust_pointers(oop obj) {
   MarkSweep::adjust_pointer(m->adr_forward_method());
   MarkSweep::adjust_pointer(m->adr_new_version());
   MarkSweep::adjust_pointer(m->adr_old_version());
-  MarkSweep::adjust_pointer(m->adr_constants());
   if (m->method_data() != NULL) {
     MarkSweep::adjust_pointer(m->adr_method_data());
   }
@@ -238,7 +227,6 @@ int methodKlass::oop_update_pointers(ParCompactionManager* cm, oop obj) {
   PSParallelCompact::adjust_pointer(m->adr_forward_method());
   PSParallelCompact::adjust_pointer(m->adr_new_version());
   PSParallelCompact::adjust_pointer(m->adr_old_version());
-  PSParallelCompact::adjust_pointer(m->adr_constants());
 #ifdef COMPILER2
   if (m->method_data() != NULL) {
     PSParallelCompact::adjust_pointer(m->adr_method_data());
@@ -286,7 +274,11 @@ void methodKlass::oop_print_on(oop obj, outputStream* st) {
     st->print_cr(" - highest level:     %d", m->highest_comp_level());
   st->print_cr(" - vtable index:      %d",   m->_vtable_index);
   st->print_cr(" - i2i entry:         " INTPTR_FORMAT, m->interpreter_entry());
-  st->print_cr(" - adapter:           " INTPTR_FORMAT, m->adapter());
+  st->print(   " - adapters:          ");
+  if (m->adapter() == NULL)
+    st->print_cr(INTPTR_FORMAT, m->adapter());
+  else
+    m->adapter()->print_adapter_on(st);
   st->print_cr(" - compiled entry     " INTPTR_FORMAT, m->from_compiled_entry());
   st->print_cr(" - code size:         %d",   m->code_size());
   if (m->code_size() != 0) {
@@ -334,13 +326,8 @@ void methodKlass::oop_print_on(oop obj, outputStream* st) {
   if (m->code() != NULL) {
     st->print   (" - compiled code: ");
     m->code()->print_value_on(st);
-    st->cr();
   }
-  if (m->is_method_handle_invoke()) {
-    st->print_cr(" - invoke method type: " INTPTR_FORMAT, (address) m->method_handle_type());
-    // m is classified as native, but it does not have an interesting
-    // native_function or signature handler
-  } else if (m->is_native()) {
+  if (m->is_native()) {
     st->print_cr(" - native function:   " INTPTR_FORMAT, m->native_function());
     st->print_cr(" - signature handler: " INTPTR_FORMAT, m->signature_handler());
   }
@@ -375,8 +362,6 @@ void methodKlass::oop_verify_on(oop obj, outputStream* st) {
   if (!obj->partially_loaded()) {
     methodOop m = methodOop(obj);
     guarantee(m->is_perm(),  "should be in permspace");
-    guarantee(m->constants()->is_perm(), "should be in permspace");
-    guarantee(m->constants()->is_constantPool(), "should be constant pool");
     guarantee(m->constMethod()->is_constMethod(), "should be constMethodOop");
     guarantee(m->constMethod()->is_perm(), "should be in permspace");
     methodDataOop method_data = m->method_data();

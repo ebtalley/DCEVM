@@ -1313,7 +1313,7 @@ void Monitor::set_owner_implementation(Thread *new_owner) {
           this->rank() != Mutex::redefine_classes && 
           locks != NULL && locks->rank() <= this->rank() &&
           !SafepointSynchronize::is_at_safepoint() &&
-          this != Interrupt_lock && this != ProfileVM_lock &&
+          this != Interrupt_lock &&
           !(this == Safepoint_lock && contains(locks, Terminator_lock) &&
             SafepointSynchronize::is_synchronizing())) {
         new_owner->print_owned_locks();
@@ -1373,6 +1373,10 @@ void Monitor::check_prelock_state(Thread *thread) {
     }
     debug_only(if (rank() != Mutex::special) \
       thread->check_for_valid_safepoint_state(false);)
+  }
+  if (thread->is_Watcher_thread()) {
+    assert(!WatcherThread::watcher_thread()->has_crash_protection(),
+        "locking not allowed when crash protection is set");
   }
 }
 

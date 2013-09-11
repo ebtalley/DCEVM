@@ -52,12 +52,6 @@
 #include "thread_bsd.inline.hpp"
 #include "utilities/events.hpp"
 #include "utilities/vmError.hpp"
-#ifdef COMPILER1
-#include "c1/c1_Runtime1.hpp"
-#endif
-#ifdef COMPILER2
-#include "opto/runtime.hpp"
-#endif
 
 // put OS-includes here
 # include <sys/types.h>
@@ -297,7 +291,7 @@ char* os::non_memory_address_word() {
   return (char*) -1;
 }
 
-void os::initialize_thread() {
+void os::initialize_thread(Thread* thr) {
 // Nothing to do.
 }
 
@@ -407,6 +401,10 @@ JVM_handle_bsd_signal(int sig,
   ucontext_t* uc = (ucontext_t*) ucVoid;
 
   Thread* t = ThreadLocalStorage::get_thread_slow();
+
+  // Must do this before SignalHandlerMark, if crash protection installed we will longjmp away
+  // (no destructors can be run)
+  os::WatcherThreadCrashProtection::check_crash_protection(sig, t);
 
   SignalHandlerMark shm(t);
 
@@ -1132,3 +1130,8 @@ void os::setup_fpu() {
                       : "r" (fpu_cntrl) : "memory");
 #endif // !AMD64
 }
+
+#ifndef PRODUCT
+void os::verify_stack_alignment() {
+}
+#endif

@@ -66,36 +66,6 @@ bool MethodComparator::methods_EMCP(methodOop old_method, methodOop new_method) 
       return false;
   }
 
-  // DCEVM: Added exception table comparison to EMCP comparison
-
-  typeArrayOop ex_old = old_method->constMethod()->exception_table();
-  typeArrayOop ex_new = new_method->constMethod()->exception_table();
-
-  if (ex_old == NULL && ex_new != NULL) return false;
-  if (ex_old != NULL && ex_new == NULL) return false;
-
-  if (ex_old != NULL && ex_new != NULL && ex_old->length() == ex_new->length()) {
-    // Per entry:
-    /* start    */     
-    /* limit    */      
-    /* goto pc  */     
-    /* cp index */
-    for (int i=0; i<ex_old->length(); i++) {
-      int old_val = ex_old->int_at(i);
-      int new_val = ex_new->int_at(i);
-      if ((i + 1) % 4 == 0) {
-        if (old_val == 0 || new_val == 0) {
-          if (old_val != new_val) return false;
-        } else if ((_old_cp->klass_at_noresolve(old_val) != _new_cp->klass_at_noresolve(new_val)))
-          return false;
-      } else {
-        if (old_val != new_val) {
-          return false;
-        }
-      }
-    }
-  }
-
   return true;
 }
 

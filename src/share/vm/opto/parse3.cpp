@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2011, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -116,7 +116,7 @@ void Parse::do_field_access(bool is_get, bool is_field) {
   Node* obj;
   if (is_field) {
     int obj_depth = is_get ? 0 : field->type()->size();
-    obj = do_null_check(peek(obj_depth), T_OBJECT);
+    obj = null_check(peek(obj_depth));
     // Compile-time detect of null-exception?
     if (stopped())  return;
 
@@ -126,11 +126,11 @@ void Parse::do_field_access(bool is_get, bool is_field) {
 #endif
 
     if (is_get) {
-      --_sp;  // pop receiver before getting
+      (void) pop();  // pop receiver before getting
       do_get_xxx(obj, field, is_field);
     } else {
       do_put_xxx(obj, field, is_field);
-      --_sp;  // pop receiver after putting
+      (void) pop();  // pop receiver after putting
     }
   } else {
     const TypeInstPtr* tip = TypeInstPtr::make(field_holder->java_mirror());
@@ -230,7 +230,7 @@ void Parse::do_get_xxx(Node* obj, ciField* field, bool is_field) {
     }
     // If there is going to be a trap, put it at the next bytecode:
     set_bci(iter().next_bci());
-    do_null_assert(peek(), T_OBJECT);
+    null_assert(peek());
     set_bci(iter().cur_bci()); // put it back
   }
 
@@ -277,25 +277,7 @@ void Parse::do_put_xxx(Node* obj, ciField* field, bool is_field) {
   // If reference is volatile, prevent following volatiles ops from
   // floating up before the volatile write.
   if (is_vol) {
-    // First place the specific membar for THIS volatile index. This first
-    // membar is dependent on the store, keeping any other membars generated
-    // below from floating up past the store.
-    int adr_idx = C->get_alias_index(adr_type);
-    insert_mem_bar_volatile(Op_MemBarVolatile, adr_idx, store);
-
-    // Now place a membar for AliasIdxBot for the unknown yet-to-be-parsed
-    // volatile alias indices. Skip this if the membar is redundant.
-    if (adr_idx != Compile::AliasIdxBot) {
-      insert_mem_bar_volatile(Op_MemBarVolatile, Compile::AliasIdxBot, store);
-    }
-
-    // Finally, place alias-index-specific membars for each volatile index
-    // that isn't the adr_idx membar. Typically there's only 1 or 2.
-    for( int i = Compile::AliasIdxRaw; i < C->num_alias_types(); i++ ) {
-      if (i != adr_idx && C->alias_type(i)->is_volatile()) {
-        insert_mem_bar_volatile(Op_MemBarVolatile, i, store);
-      }
-    }
+    insert_mem_bar(Op_MemBarVolatile); // Use fat membar
   }
 
   // If the field is final, the rules of Java say we are in <init> or <clinit>.
@@ -463,7 +445,7 @@ void Parse::do_multianewarray() {
     // Note: the reexecute bit will be set in GraphKit::add_safepoint_edges()
     // when AllocateArray node for newarray is created.
     { PreserveReexecuteState preexecs(this);
-      _sp += ndimensions;
+      inc_sp(ndimensions);
       // Pass 0 as nargs since uncommon trap code does not need to restore stack.
       obj = expand_multianewarray(array_klass, &length[0], ndimensions, 0);
     } //original reexecute and sp are set back here
@@ -487,12 +469,13 @@ void Parse::do_multianewarray() {
                           fun, NULL, TypeRawPtr::BOTTOM,
                           makecon(TypeKlassPtr::make(array_klass)),
                           length[0], length[1], length[2],
-                          length[3], length[4]);
+                          (ndimensions > 2) ? length[3] : NULL,
+                          (ndimensions > 3) ? length[4] : NULL);
   } else {
     // Create a java array for dimension sizes
     Node* dims = NULL;
     { PreserveReexecuteState preexecs(this);
-      _sp += ndimensions;
+      inc_sp(ndimensions);
       Node* dims_array_klass = makecon(TypeKlassPtr::make(ciArrayKlass::make(ciType::make(T_INT))));
       dims = new_array(dims_array_klass, intcon(ndimensions), 0);
 
@@ -509,8 +492,9 @@ void Parse::do_multianewarray() {
                           makecon(TypeKlassPtr::make(array_klass)),
                           dims);
   }
+  make_slow_call_ex(c, env()->Throwable_klass(), false);
 
-  Node* res = _gvn.transform(new (C, 1) ProjNode(c, TypeFunc::Parms));
+  Node* res = _gvn.transform(new (C) ProjNode(c, TypeFunc::Parms));
 
   const Type* type = TypeOopPtr::make_from_klass_raw(array_klass);
 
@@ -524,7 +508,7 @@ void Parse::do_multianewarray() {
 
     // We cannot sharpen the nested sub-arrays, since the top level is mutable.
 
-  Node* cast = _gvn.transform( new (C, 2) CheckCastPPNode(control(), res, type) );
+  Node* cast = _gvn.transform( new (C) CheckCastPPNode(control(), res, type) );
   push(cast);
 
   // Possible improvements:

@@ -202,7 +202,7 @@ bool VM_RedefineClasses::doit_prologue() {
 
   // We first load new class versions in the prologue, because somewhere down the
   // call chain it is required that the current thread is a Java thread.
-  _new_classes = new (ResourceObj::C_HEAP) GrowableArray<instanceKlassHandle>(5, true);
+  _new_classes = new (ResourceObj::C_HEAP, mtInternal) GrowableArray<instanceKlassHandle>(5, true);
   _result = load_new_class_versions(Thread::current());
 
   RC_TRACE(0x00000001, ("Loaded new class versions!"));
@@ -1810,19 +1810,11 @@ bool VM_RedefineClasses::check_method_stacks() {
                   const size_t message_buffer_len = klass->name()->utf8_length() + 1024;
                   char* message_buffer = NEW_RESOURCE_ARRAY(char, message_buffer_len);
 
-                  if (TraceRedefineClasses >= 4) {
-                    ClassVerifier::_verify_verbose = true;
-                  }
-
                   Thread::current()->set_pretend_new_universe(true);
-                  ClassVerifier split_verifier(klass, message_buffer, message_buffer_len, Thread::current());
+                  ClassVerifier split_verifier(klass, Thread::current());
                   split_verifier.verify_method(jvf->method(), Thread::current());
                   exception_name = split_verifier.result();
                   Thread::current()->set_pretend_new_universe(false);
-
-                  if (TraceRedefineClasses >= 4) {
-                    ClassVerifier::_verify_verbose = false;
-                  }
 
                   if (exception_name != NULL) {
                  
@@ -2257,7 +2249,7 @@ void VM_RedefineClasses::doit() {
 
             if (obj->blueprint()->check_redefinition_flag(Klass::HasInstanceTransformer)) {
               if (_updated_oops == NULL) {
-                _updated_oops = new (ResourceObj::C_HEAP) GrowableArray<oop>(100, true);
+                _updated_oops = new (ResourceObj::C_HEAP, mtInternal) GrowableArray<oop>(100, true);
               }
               _updated_oops->append(obj);
             }

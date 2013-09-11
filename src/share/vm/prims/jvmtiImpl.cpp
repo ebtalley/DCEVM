@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2011, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -98,8 +98,8 @@ JvmtiAgentThread::call_start_function() {
 void GrowableCache::recache() {
   int len = _elements->length();
 
-  FREE_C_HEAP_ARRAY(address, _cache);
-  _cache = NEW_C_HEAP_ARRAY(address,len+1);
+  FREE_C_HEAP_ARRAY(address, _cache, mtInternal);
+  _cache = NEW_C_HEAP_ARRAY(address,len+1, mtInternal);
 
   for (int i=0; i<len; i++) {
     _cache[i] = _elements->at(i)->getCacheValue();
@@ -142,13 +142,13 @@ GrowableCache::GrowableCache() {
 GrowableCache::~GrowableCache() {
   clear();
   delete _elements;
-  FREE_C_HEAP_ARRAY(address, _cache);
+  FREE_C_HEAP_ARRAY(address, _cache, mtInternal);
 }
 
 void GrowableCache::initialize(void *this_obj, void listener_fun(void *, address*) ) {
   _this_obj       = this_obj;
   _listener_fun   = listener_fun;
-  _elements       = new (ResourceObj::C_HEAP) GrowableArray<GrowableElement*>(5,true);
+  _elements       = new (ResourceObj::C_HEAP, mtInternal) GrowableArray<GrowableElement*>(5,true);
   recache();
 }
 
@@ -374,19 +374,14 @@ void VM_ChangeBreakpoints::doit() {
   case CLEAR_BREAKPOINT:
     _breakpoints->clear_at_safepoint(*_bp);
     break;
-  case CLEAR_ALL_BREAKPOINT:
-    _breakpoints->clearall_at_safepoint();
-    break;
   default:
     assert(false, "Unknown operation");
   }
 }
 
 void VM_ChangeBreakpoints::oops_do(OopClosure* f) {
-  // This operation keeps breakpoints alive
-  if (_breakpoints != NULL) {
-    _breakpoints->oops_do(f);
-  }
+  // The JvmtiBreakpoints in _breakpoints will be visited via
+  // JvmtiExport::oops_do.
   if (_bp != NULL) {
     _bp->oops_do(f);
   }
@@ -447,23 +442,13 @@ void JvmtiBreakpoints::clear_at_safepoint(JvmtiBreakpoint& bp) {
   }
 }
 
-void JvmtiBreakpoints::clearall_at_safepoint() {
-  assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint");
-
-  int len = _bps.length();
-  for (int i=0; i<len; i++) {
-    _bps.at(i).clear();
-  }
-  _bps.clear();
-}
-
 int JvmtiBreakpoints::length() { return _bps.length(); }
 
 int JvmtiBreakpoints::set(JvmtiBreakpoint& bp) {
   if ( _bps.find(bp) != -1) {
      return JVMTI_ERROR_DUPLICATE;
   }
-  VM_ChangeBreakpoints set_breakpoint(this,VM_ChangeBreakpoints::SET_BREAKPOINT, &bp);
+  VM_ChangeBreakpoints set_breakpoint(VM_ChangeBreakpoints::SET_BREAKPOINT, &bp);
   VMThread::execute(&set_breakpoint);
   return JVMTI_ERROR_NONE;
 }
@@ -473,7 +458,7 @@ int JvmtiBreakpoints::clear(JvmtiBreakpoint& bp) {
      return JVMTI_ERROR_NOT_FOUND;
   }
 
-  VM_ChangeBreakpoints clear_breakpoint(this,VM_ChangeBreakpoints::CLEAR_BREAKPOINT, &bp);
+  VM_ChangeBreakpoints clear_breakpoint(VM_ChangeBreakpoints::CLEAR_BREAKPOINT, &bp);
   VMThread::execute(&clear_breakpoint);
   return JVMTI_ERROR_NONE;
 }
@@ -502,11 +487,6 @@ void JvmtiBreakpoints::clearall_in_class_at_safepoint(klassOop klass) {
       }
     }
   }
-}
-
-void JvmtiBreakpoints::clearall() {
-  VM_ChangeBreakpoints clearall_breakpoint(this,VM_ChangeBreakpoints::CLEAR_ALL_BREAKPOINT);
-  VMThread::execute(&clearall_breakpoint);
 }
 
 //
@@ -919,8 +899,6 @@ void JvmtiSuspendControl::print() {
 #endif
 }
 
-#ifndef KERNEL
-
 JvmtiDeferredEvent JvmtiDeferredEvent::compiled_method_load_event(
     nmethod* nm) {
   JvmtiDeferredEvent event = JvmtiDeferredEvent(TYPE_COMPILED_METHOD_LOAD);
@@ -1112,5 +1090,3 @@ void JvmtiDeferredEventQueue::process_pending_events() {
     }
   }
 }
-
-#endif // ndef KERNEL

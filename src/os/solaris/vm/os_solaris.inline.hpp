@@ -71,7 +71,7 @@ inline bool os::allocate_stack_guard_pages() {
 
 
 // On Solaris, reservations are made on a page by page basis, nothing to do.
-inline void os::split_reserved_memory(char *base, size_t size,
+inline void os::pd_split_reserved_memory(char *base, size_t size,
                                       size_t split, bool realloc) {
 }
 
@@ -93,7 +93,7 @@ inline int os::readdir_buf_size(const char *path) {
 
 inline struct dirent* os::readdir(DIR* dirp, dirent* dbuf) {
   assert(dirp != NULL, "just checking");
-#if defined(_LP64) || defined(_GNU_SOURCE)
+#if defined(_LP64) || defined(_GNU_SOURCE) || _FILE_OFFSET_BITS==64
   dirent* p;
   int status;
 
@@ -102,9 +102,9 @@ inline struct dirent* os::readdir(DIR* dirp, dirent* dbuf) {
     return NULL;
   } else
     return p;
-#else  // defined(_LP64) || defined(_GNU_SOURCE)
+#else  // defined(_LP64) || defined(_GNU_SOURCE) || _FILE_OFFSET_BITS==64
   return ::readdir_r(dirp, dbuf);
-#endif // defined(_LP64) || defined(_GNU_SOURCE)
+#endif // defined(_LP64) || defined(_GNU_SOURCE) || _FILE_OFFSET_BITS==64
 }
 
 inline int os::closedir(DIR *dirp) {

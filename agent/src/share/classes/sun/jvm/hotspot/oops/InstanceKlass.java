@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2011, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -50,9 +50,7 @@ public class InstanceKlass extends Klass {
   private static int INITVAL_INDEX_OFFSET;
   private static int LOW_OFFSET;
   private static int HIGH_OFFSET;
-  private static int GENERIC_SIGNATURE_INDEX_OFFSET;
   private static int FIELD_SLOTS;
-  public static int IMPLEMENTORS_LIMIT;
 
   // ClassState constants
   private static int CLASS_STATE_UNPARSABLE_BY_GC;
@@ -70,13 +68,6 @@ public class InstanceKlass extends Klass {
     methodOrdering       = new OopField(type.getOopField("_method_ordering"), Oop.getHeaderSize());
     localInterfaces      = new OopField(type.getOopField("_local_interfaces"), Oop.getHeaderSize());
     transitiveInterfaces = new OopField(type.getOopField("_transitive_interfaces"), Oop.getHeaderSize());
-    nofImplementors      = new CIntField(type.getCIntegerField("_nof_implementors"), Oop.getHeaderSize());
-    IMPLEMENTORS_LIMIT   = db.lookupIntConstant("instanceKlass::implementors_limit").intValue();
-    implementors         = new OopField[IMPLEMENTORS_LIMIT];
-    for (int i = 0; i < IMPLEMENTORS_LIMIT; i++) {
-      long arrayOffset = Oop.getHeaderSize() + (i * db.getAddressSize());
-      implementors[i]    = new OopField(type.getOopField("_implementors[0]"), arrayOffset);
-    }
     fields               = new OopField(type.getOopField("_fields"), Oop.getHeaderSize());
     javaFieldsCount      = new CIntField(type.getCIntegerField("_java_fields_count"), Oop.getHeaderSize());
     constants            = new OopField(type.getOopField("_constants"), Oop.getHeaderSize());
@@ -98,6 +89,7 @@ public class InstanceKlass extends Klass {
     genericSignature     = type.getAddressField("_generic_signature");
     majorVersion         = new CIntField(type.getCIntegerField("_major_version"), Oop.getHeaderSize());
     minorVersion         = new CIntField(type.getCIntegerField("_minor_version"), Oop.getHeaderSize());
+    miscFlags            = new CIntField(type.getCIntegerField("_misc_flags"), Oop.getHeaderSize());
     headerSize           = alignObjectOffset(Oop.getHeaderSize() + type.getSize());
 
     // read field offset constants
@@ -107,7 +99,6 @@ public class InstanceKlass extends Klass {
     INITVAL_INDEX_OFFSET           = db.lookupIntConstant("FieldInfo::initval_index_offset").intValue();
     LOW_OFFSET                     = db.lookupIntConstant("FieldInfo::low_offset").intValue();
     HIGH_OFFSET                    = db.lookupIntConstant("FieldInfo::high_offset").intValue();
-    GENERIC_SIGNATURE_INDEX_OFFSET = db.lookupIntConstant("FieldInfo::generic_signature_offset").intValue();
     FIELD_SLOTS                    = db.lookupIntConstant("FieldInfo::field_slots").intValue();
     // read ClassState constants
     CLASS_STATE_UNPARSABLE_BY_GC = db.lookupIntConstant("instanceKlass::unparsable_by_gc").intValue();
@@ -136,8 +127,6 @@ public class InstanceKlass extends Klass {
   private static OopField  methodOrdering;
   private static OopField  localInterfaces;
   private static OopField  transitiveInterfaces;
-  private static CIntField nofImplementors;
-  private static OopField[] implementors;
   private static OopField  fields;
   private static CIntField javaFieldsCount;
   private static OopField  constants;
@@ -159,6 +148,16 @@ public class InstanceKlass extends Klass {
   private static AddressField  genericSignature;
   private static CIntField majorVersion;
   private static CIntField minorVersion;
+  private static CIntField miscFlags;
+
+  private static final long MISC_REWRITTEN            = 1 << 0; // methods rewritten.
+  private static final long MISC_HAS_NONSTATIC_FIELDS = 1 << 1; // for sizing with UseCompressedOops
+  private static final long MISC_SHOULD_VERIFY_CLASS  = 1 << 1; // allow caching of preverification
+  private static final long MISC_IS_ANONYMOUS         = 1 << 3; // has embedded _inner_classes field
+
+  public boolean isAnonymous() {
+    return (miscFlags.getValue(this) & MISC_IS_ANONYMOUS) != 0;
+  }
 
   // type safe enum for ClassState from instanceKlass.hpp
   public static class ClassState {
@@ -289,7 +288,25 @@ public class InstanceKlass extends Klass {
   }
 
   public short getFieldGenericSignatureIndex(int index) {
-    return getFields().getShortAt(index * FIELD_SLOTS + GENERIC_SIGNATURE_INDEX_OFFSET);
+    int len = (int)getFields().getLength();
+    int allFieldsCount = getAllFieldsCount();
+    int generic_signature_slot = allFieldsCount * FIELD_SLOTS;
+    for (int i = 0; i < allFieldsCount; i++) {
+      short flags = getFieldAccessFlags(i);
+      AccessFlags access = new AccessFlags(flags);
+      if (i == index) {
+        if (access.fieldHasGenericSignature()) {
+          return getFields().getShortAt(generic_signature_slot);
+        } else {
+          return 0;
+        }
+      } else {
+        if (access.fieldHasGenericSignature()) {
+          generic_signature_slot ++;
+        }
+      }
+    }
+    return 0;
   }
 
   public Symbol getFieldGenericSignature(int index) {
@@ -317,18 +334,26 @@ public class InstanceKlass extends Klass {
   public TypeArray getMethodOrdering()      { return (TypeArray)    methodOrdering.getValue(this); }
   public ObjArray  getLocalInterfaces()     { return (ObjArray)     localInterfaces.getValue(this); }
   public ObjArray  getTransitiveInterfaces() { return (ObjArray)     transitiveInterfaces.getValue(this); }
-  public long      nofImplementors()        { return                nofImplementors.getValue(this); }
-  public Klass     getImplementor()         { return (Klass)        implementors[0].getValue(this); }
-  public Klass     getImplementor(int i)    { return (Klass)        implementors[i].getValue(this); }
   public TypeArray getFields()              { return (TypeArray)    fields.getValue(this); }
   public int       getJavaFieldsCount()     { return                (int) javaFieldsCount.getValue(this); }
-  public int       getAllFieldsCount()      { return                (int)getFields().getLength() / FIELD_SLOTS; }
+  public int       getAllFieldsCount()      {
+    int len = (int)getFields().getLength();
+    int allFieldsCount = 0;
+    for (; allFieldsCount*FIELD_SLOTS < len; allFieldsCount++) {
+      short flags = getFieldAccessFlags(allFieldsCount);
+      AccessFlags access = new AccessFlags(flags);
+      if (access.fieldHasGenericSignature()) {
+        len --;
+      }
+    }
+    return allFieldsCount;
+  }
   public ConstantPool getConstants()        { return (ConstantPool) constants.getValue(this); }
   public Oop       getClassLoader()         { return                classLoader.getValue(this); }
   public Oop       getProtectionDomain()    { return                protectionDomain.getValue(this); }
   public ObjArray  getSigners()             { return (ObjArray)     signers.getValue(this); }
   public Symbol    getSourceFileName()      { return getSymbol(sourceFileName); }
-  public Symbol    getSourceDebugExtension(){ return getSymbol(sourceDebugExtension); }
+  public String    getSourceDebugExtension(){ return                CStringUtilities.getString(sourceDebugExtension.getValue(getHandle())); }
   public TypeArray getInnerClasses()        { return (TypeArray)    innerClasses.getValue(this); }
   public long      getNonstaticFieldSize()  { return                nonstaticFieldSize.getValue(this); }
   public long      getStaticOopFieldCount() { return                staticOopFieldCount.getValue(this); }
@@ -359,6 +384,12 @@ public class InstanceKlass extends Klass {
     public static final int innerClassNextOffset = 4;
   };
 
+  public static interface EnclosingMethodAttributeOffset {
+    public static final int enclosing_method_class_index_offset = 0;
+    public static final int enclosing_method_method_index_offset = 1;
+    public static final int enclosing_method_attribute_size = 2;
+  };
+
   // refer to compute_modifier_flags in VM code.
   public long computeModifierFlags() {
     long access = getAccessFlags();
@@ -367,9 +398,14 @@ public class InstanceKlass extends Klass {
     int length = ( innerClassList == null)? 0 : (int) innerClassList.getLength();
     if (length > 0) {
        if (Assert.ASSERTS_ENABLED) {
-          Assert.that(length % InnerClassAttributeOffset.innerClassNextOffset == 0, "just checking");
+          Assert.that(length % InnerClassAttributeOffset.innerClassNextOffset == 0 ||
+                      length % InnerClassAttributeOffset.innerClassNextOffset == EnclosingMethodAttributeOffset.enclosing_method_attribute_size,
+                      "just checking");
        }
        for (int i = 0; i < length; i += InnerClassAttributeOffset.innerClassNextOffset) {
+          if (i == length - EnclosingMethodAttributeOffset.enclosing_method_attribute_size) {
+              break;
+          }
           int ioff = innerClassList.getShortAt(i +
                          InnerClassAttributeOffset.innerClassInnerClassInfoOffset);
           // 'ioff' can be zero.
@@ -419,9 +455,14 @@ public class InstanceKlass extends Klass {
     int length = ( innerClassList == null)? 0 : (int) innerClassList.getLength();
     if (length > 0) {
        if (Assert.ASSERTS_ENABLED) {
-         Assert.that(length % InnerClassAttributeOffset.innerClassNextOffset == 0, "just checking");
+         Assert.that(length % InnerClassAttributeOffset.innerClassNextOffset == 0 ||
+                     length % InnerClassAttributeOffset.innerClassNextOffset == EnclosingMethodAttributeOffset.enclosing_method_attribute_size,
+                     "just checking");
        }
        for (int i = 0; i < length; i += InnerClassAttributeOffset.innerClassNextOffset) {
+         if (i == length - EnclosingMethodAttributeOffset.enclosing_method_attribute_size) {
+             break;
+         }
          int ioff = innerClassList.getShortAt(i +
                         InnerClassAttributeOffset.innerClassInnerClassInfoOffset);
          // 'ioff' can be zero.
@@ -511,9 +552,6 @@ public class InstanceKlass extends Klass {
       visitor.doOop(methodOrdering, true);
       visitor.doOop(localInterfaces, true);
       visitor.doOop(transitiveInterfaces, true);
-      visitor.doCInt(nofImplementors, true);
-      for (int i = 0; i < IMPLEMENTORS_LIMIT; i++)
-        visitor.doOop(implementors[i], true);
       visitor.doOop(fields, true);
       visitor.doOop(constants, true);
       visitor.doOop(classLoader, true);
@@ -772,9 +810,22 @@ public class InstanceKlass extends Klass {
 
 
   public long getObjectSize() {
-    long bodySize =    alignObjectOffset(getVtableLen() * getHeap().getOopSize())
-                     + alignObjectOffset(getItableLen() * getHeap().getOopSize())
-                     + (getNonstaticOopMapSize()) * getHeap().getOopSize();
+    final long oopSize = getHeap().getOopSize();
+
+    long vtableSize = alignObjectOffset(getVtableLen() * oopSize);
+    long itableSize = alignObjectOffset(getItableLen() * oopSize);
+
+    long nonStaticOopMapSizeBytes = getNonstaticOopMapSize() * oopSize;
+    long alignedNonStaticOopMapSize = isInterface() || isAnonymous() ?
+                                        alignObjectOffset(nonStaticOopMapSizeBytes) :
+                                        nonStaticOopMapSizeBytes;
+
+    long interfaceImplementorSize = isInterface() ? oopSize : 0;
+    long hostKlassSize = isAnonymous() ? oopSize : 0;
+
+    long bodySize = vtableSize + itableSize + nonStaticOopMapSizeBytes +
+                    interfaceImplementorSize + hostKlassSize;
+
     return alignObjectSize(headerSize + bodySize);
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -64,7 +64,6 @@
 // | klass                                                |
 // |------------------------------------------------------|
 // | constMethodOop                 (oop)                 |
-// | constants                      (oop)                 |
 // |------------------------------------------------------|
 // | methodData                     (oop)                 |
 // | interp_invocation_count                              |
@@ -110,7 +109,6 @@ class methodOopDesc : public oopDesc {
  friend class VMStructs;
  private:
   constMethodOop    _constMethod;                // Method read-only data.
-  constantPoolOop   _constants;                  // Constant pool
   methodDataOop     _method_data;
   int               _interpreter_invocation_count; // Count of times invoked (reused as prev_event_count in tiered)
   AccessFlags       _access_flags;               // Access flags
@@ -129,8 +127,11 @@ class methodOopDesc : public oopDesc {
   u2                _max_locals;                 // Number of local variables used by this method
   u2                _size_of_parameters;         // size of the parameter block (receiver + arguments) in words
   u1                _intrinsic_id;               // vmSymbols::intrinsic_id (0 == _none)
-  u1                _jfr_towrite : 1,            // Flags
-                                 : 7;
+  u1                _jfr_towrite  : 1,           // Flags
+                    _force_inline : 1,
+                    _hidden       : 1,
+                    _dont_inline  : 1,
+                                  : 4;
   u2                _interpreter_throwout_count; // Count of times method was exited via exception while interpreting
   u2                _number_of_breakpoints;      // fullspeed debugging support
   InvocationCounter _invocation_counter;         // Incremented before each activation of the method - used to trigger frequency-based optimizations
@@ -175,7 +176,7 @@ class methodOopDesc : public oopDesc {
   void set_access_flags(AccessFlags flags)       { _access_flags = flags; }
 
   // name
-  Symbol* name() const                           { return _constants->symbol_at(name_index()); }
+  Symbol* name() const                           { return constants()->symbol_at(name_index()); }
   int name_index() const                         { return constMethod()->name_index();         }
   void set_name_index(int index)                 { constMethod()->set_name_index(index);       }
 
@@ -206,12 +207,12 @@ class methodOopDesc : public oopDesc {
   }
 
   // signature
-  Symbol* signature() const                      { return _constants->symbol_at(signature_index()); }
+  Symbol* signature() const                      { return constants()->symbol_at(signature_index()); }
   int signature_index() const                    { return constMethod()->signature_index();         }
   void set_signature_index(int index)            { constMethod()->set_signature_index(index);       }
 
   // generics support
-  Symbol* generic_signature() const              { int idx = generic_signature_index(); return ((idx != 0) ? _constants->symbol_at(idx) : (Symbol*)NULL); }
+  Symbol* generic_signature() const              { int idx = generic_signature_index(); return ((idx != 0) ? constants()->symbol_at(idx) : (Symbol*)NULL); }
   int generic_signature_index() const            { return constMethod()->generic_signature_index(); }
   void set_generic_signature_index(int index)    { constMethod()->set_generic_signature_index(index); }
 
@@ -273,12 +274,14 @@ class methodOopDesc : public oopDesc {
   }
 
   // constant pool for klassOop holding this method
-  constantPoolOop constants() const              { return _constants; }
-  void set_constants(constantPoolOop c)          { oop_store_without_check((oop*)&_constants, c); }
+  constantPoolOop constants() const              { return constMethod()->constants(); }
+  void set_constants(constantPoolOop c)          { constMethod()->set_constants(c); }
 
   // max stack
-  int  max_stack() const                         { return _max_stack; }
-  void set_max_stack(int size)                   { _max_stack = size; }
+  // return original max stack size for method verification
+  int  verifier_max_stack() const                { return _max_stack; }
+  int           max_stack() const                { return _max_stack + extra_stack_entries(); }
+  void      set_max_stack(int size)              {        _max_stack = size; }
 
   // max locals
   int  max_locals() const                        { return _max_locals; }
@@ -315,12 +318,12 @@ class methodOopDesc : public oopDesc {
   }
 
   // exception handler table
-  typeArrayOop exception_table() const
-                                   { return constMethod()->exception_table(); }
-  void set_exception_table(typeArrayOop e)
-                                     { constMethod()->set_exception_table(e); }
   bool has_exception_handler() const
                              { return constMethod()->has_exception_handler(); }
+  int exception_table_length() const
+                             { return constMethod()->exception_table_length(); }
+  ExceptionTableElement* exception_table_start() const
+                             { return constMethod()->exception_table_start(); }
 
   // Finds the first entry point bci of an exception handler for an
   // exception of klass ex_klass thrown at throw_bci. A value of NULL
@@ -334,7 +337,7 @@ class methodOopDesc : public oopDesc {
   // exception handler which caused the exception to be thrown, which
   // is needed for proper retries. See, for example,
   // InterpreterRuntime::exception_handler_for_exception.
-  int fast_exception_handler_bci_for(KlassHandle ex_klass, int throw_bci, TRAPS);
+  static int fast_exception_handler_bci_for(methodHandle mh, KlassHandle ex_klass, int throw_bci, TRAPS);
 
   // method data access
   methodDataOop method_data() const              {
@@ -484,7 +487,7 @@ class methodOopDesc : public oopDesc {
                        { return constMethod()->compressed_linenumber_table(); }
 
   // method holder (the klassOop holding this method)
-  klassOop method_holder() const                 { return _constants->pool_holder(); }
+  klassOop method_holder() const                 { return constants()->pool_holder(); }
 
   void compute_size_of_parameters(Thread *thread); // word size of parameters (receiver if any + arguments)
   Symbol* klass_name() const;                    // returns the name of the method holder
@@ -575,7 +578,6 @@ class methodOopDesc : public oopDesc {
 
   // interpreter support
   static ByteSize const_offset()                 { return byte_offset_of(methodOopDesc, _constMethod       ); }
-  static ByteSize constants_offset()             { return byte_offset_of(methodOopDesc, _constants         ); }
   static ByteSize access_flags_offset()          { return byte_offset_of(methodOopDesc, _access_flags      ); }
 #ifdef CC_INTERP
   static ByteSize result_index_offset()          { return byte_offset_of(methodOopDesc, _result_index ); }
@@ -623,28 +625,19 @@ class methodOopDesc : public oopDesc {
   bool is_overridden_in(klassOop k) const;
 
   // JSR 292 support
-  bool is_method_handle_invoke() const              { return access_flags().is_method_handle_invoke(); }
-  static bool is_method_handle_invoke_name(vmSymbols::SID name_sid);
-  static bool is_method_handle_invoke_name(Symbol* name) {
-    return is_method_handle_invoke_name(vmSymbols::find_sid(name));
-  }
-  // Tests if this method is an internal adapter frame from the
-  // MethodHandleCompiler.
-  bool is_method_handle_adapter() const;
-  static methodHandle make_invoke_method(KlassHandle holder,
-                                         Symbol* name, //invokeExact or invokeGeneric
-                                         Symbol* signature, //anything at all
-                                         Handle method_type,
-                                         TRAPS);
+  bool is_method_handle_intrinsic() const;          // MethodHandles::is_signature_polymorphic_intrinsic(intrinsic_id)
+  bool is_compiled_lambda_form() const;             // intrinsic_id() == vmIntrinsics::_compiledLambdaForm
+  bool has_member_arg() const;                      // intrinsic_id() == vmIntrinsics::_linkToSpecial, etc.
+  static methodHandle make_method_handle_intrinsic(vmIntrinsics::ID iid, // _invokeBasic, _linkToVirtual
+                                                   Symbol* signature, //anything at all
+                                                   TRAPS);
   static klassOop check_non_bcp_klass(klassOop klass);
   // these operate only on invoke methods:
-  oop method_handle_type() const;
-  static jint* method_type_offsets_chain();  // series of pointer-offsets, terminated by -1
   // presize interpreter frames for extra interpreter stack entries, if needed
   // method handles want to be able to push a few extra values (e.g., a bound receiver), and
   // invokedynamic sometimes needs to push a bootstrap method, call site, and arglist,
   // all without checking for a stack overflow
-  static int extra_stack_entries() { return EnableInvokeDynamic ? (int) MethodHandlePushLimit + 3 : 0; }
+  static int extra_stack_entries() { return EnableInvokeDynamic ? 2 : 0; }
   static int extra_stack_words();  // = extra_stack_entries() * Interpreter::stackElementSize()
 
   // RedefineClasses() support:
@@ -689,6 +682,13 @@ class methodOopDesc : public oopDesc {
   bool jfr_towrite()                 { return _jfr_towrite; }
   void set_jfr_towrite(bool towrite) { _jfr_towrite = towrite; }
 
+  bool     force_inline()       { return _force_inline;     }
+  void set_force_inline(bool x) {        _force_inline = x; }
+  bool     dont_inline()        { return _dont_inline;      }
+  void set_dont_inline(bool x)  {        _dont_inline = x;  }
+  bool  is_hidden()             { return _hidden;           }
+  void set_hidden(bool x)       {        _hidden = x;       }
+
   // On-stack replacement support
   bool has_osr_nmethod(int level, bool match_level) {
    return instanceKlass::cast(method_holder())->lookup_osr_nmethod(this, InvocationEntryBci, level, match_level) != NULL;
@@ -712,19 +712,30 @@ class methodOopDesc : public oopDesc {
   // Indicates whether compilation failed earlier for this method, or
   // whether it is not compilable for another reason like having a
   // breakpoint set in it.
-  bool is_not_compilable(int comp_level = CompLevel_any) const;
-  void set_not_compilable(int comp_level = CompLevel_all, bool report = true);
+  bool  is_not_compilable(int comp_level = CompLevel_any) const;
+  void set_not_compilable(int comp_level = CompLevel_all, bool report = true, const char* reason = NULL);
   void set_not_compilable_quietly(int comp_level = CompLevel_all) {
     set_not_compilable(comp_level, false);
   }
-  bool is_not_osr_compilable(int comp_level = CompLevel_any) const {
-    return is_not_compilable(comp_level) || access_flags().is_not_osr_compilable();
+  bool  is_not_osr_compilable(int comp_level = CompLevel_any) const;
+  void set_not_osr_compilable(int comp_level = CompLevel_all, bool report = true, const char* reason = NULL);
+  void set_not_osr_compilable_quietly(int comp_level = CompLevel_all) {
+    set_not_osr_compilable(comp_level, false);
   }
-  void set_not_osr_compilable()               { _access_flags.set_not_osr_compilable();       }
-  bool is_not_c1_compilable() const           { return access_flags().is_not_c1_compilable(); }
-  void set_not_c1_compilable()                { _access_flags.set_not_c1_compilable();        }
-  bool is_not_c2_compilable() const           { return access_flags().is_not_c2_compilable(); }
-  void set_not_c2_compilable()                { _access_flags.set_not_c2_compilable();        }
+
+ private:
+  void print_made_not_compilable(int comp_level, bool is_osr, bool report, const char* reason);
+
+ public:
+  bool  is_not_c1_compilable() const          { return access_flags().is_not_c1_compilable(); }
+  void set_not_c1_compilable()                {       _access_flags.set_not_c1_compilable();  }
+  bool  is_not_c2_compilable() const          { return access_flags().is_not_c2_compilable(); }
+  void set_not_c2_compilable()                {       _access_flags.set_not_c2_compilable();  }
+
+  bool  is_not_c1_osr_compilable() const      { return is_not_c1_compilable(); }  // don't waste an accessFlags bit
+  void set_not_c1_osr_compilable()            {       set_not_c1_compilable(); }  // don't waste an accessFlags bit
+  bool  is_not_c2_osr_compilable() const      { return access_flags().is_not_c2_osr_compilable(); }
+  void set_not_c2_osr_compilable()            {       _access_flags.set_not_c2_osr_compilable();  }
 
   // Background compilation support
   bool queued_for_compilation() const  { return access_flags().queued_for_compilation(); }
@@ -738,8 +749,8 @@ class methodOopDesc : public oopDesc {
   static bool has_unloaded_classes_in_signature(methodHandle m, TRAPS);
 
   // Printing
-  void print_short_name(outputStream* st)        /*PRODUCT_RETURN*/; // prints as klassname::methodname; Exposed so field engineers can debug VM
-  void print_name(outputStream* st)              PRODUCT_RETURN; // prints as "virtual void foo(int)"
+  void print_short_name(outputStream* st = tty); // prints as klassname::methodname; Exposed so field engineers can debug VM
+  void print_name(outputStream* st = tty); // prints as "virtual void foo(int)"; exposed for TraceRedefineClasses
 
   // Helper routine used for method sorting
   static void sort_methods(objArrayOop methods,
@@ -761,7 +772,6 @@ class methodOopDesc : public oopDesc {
   oop*  adr_forward_method() const               { return (oop*)&_forward_method;  }
   oop*  adr_new_version() const                  { return (oop*)&_new_version;     }
   oop*  adr_old_version() const                  { return (oop*)&_old_version;     }
-  oop*  adr_constants() const                    { return (oop*)&_constants;       }
   oop*  adr_method_data() const                  { return (oop*)&_method_data;     }
 };
 
@@ -843,7 +853,7 @@ class CompressedLineNumberReadStream: public CompressedReadStream {
 // breakpoints are written only at safepoints, and are read
 // concurrently only outside of safepoints.
 
-class BreakpointInfo : public CHeapObj {
+class BreakpointInfo : public CHeapObj<mtClass> {
   friend class VMStructs;
  private:
   Bytecodes::Code  _orig_bytecode;
@@ -875,6 +885,68 @@ class BreakpointInfo : public CHeapObj {
 
   void set(methodOop method);
   void clear(methodOop method);
+};
+
+// Utility class for access exception handlers
+class ExceptionTable : public StackObj {
+ private:
+  ExceptionTableElement* _table;
+  u2  _length;
+
+ public:
+  ExceptionTable(methodOop m) {
+    if (m->has_exception_handler()) {
+      _table = m->exception_table_start();
+      _length = m->exception_table_length();
+    } else {
+      _table = NULL;
+      _length = 0;
+    }
+  }
+
+  int length() const {
+    return _length;
+  }
+
+  u2 start_pc(int idx) const {
+    assert(idx < _length, "out of bounds");
+    return _table[idx].start_pc;
+  }
+
+  void set_start_pc(int idx, u2 value) {
+    assert(idx < _length, "out of bounds");
+    _table[idx].start_pc = value;
+  }
+
+  u2 end_pc(int idx) const {
+    assert(idx < _length, "out of bounds");
+    return _table[idx].end_pc;
+  }
+
+  void set_end_pc(int idx, u2 value) {
+    assert(idx < _length, "out of bounds");
+    _table[idx].end_pc = value;
+  }
+
+  u2 handler_pc(int idx) const {
+    assert(idx < _length, "out of bounds");
+    return _table[idx].handler_pc;
+  }
+
+  void set_handler_pc(int idx, u2 value) {
+    assert(idx < _length, "out of bounds");
+    _table[idx].handler_pc = value;
+  }
+
+  u2 catch_type_index(int idx) const {
+    assert(idx < _length, "out of bounds");
+    return _table[idx].catch_type_index;
+  }
+
+  void set_catch_type_index(int idx, u2 value) {
+    assert(idx < _length, "out of bounds");
+    _table[idx].catch_type_index = value;
+  }
 };
 
 #endif // SHARE_VM_OOPS_METHODOOP_HPP
